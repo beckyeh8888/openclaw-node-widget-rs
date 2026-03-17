@@ -211,24 +211,15 @@ impl TrayState {
         }
 
         if !self.last_crash_loop && crash_loop {
-            let _ = Notification::new()
-                .summary("OpenClaw Node Widget")
-                .body("Node crash loop detected")
-                .show();
+            send_notification("Node crash loop detected");
         }
 
         if let Some(previous) = self.last_status {
             if previous == NodeStatus::Online && status == NodeStatus::Offline {
-                let _ = Notification::new()
-                    .summary("OpenClaw Node Widget")
-                    .body("OpenClaw Node went offline")
-                    .show();
+                send_notification("OpenClaw Node went offline");
             }
             if previous == NodeStatus::Offline && status == NodeStatus::Online {
-                let _ = Notification::new()
-                    .summary("OpenClaw Node Widget")
-                    .body("OpenClaw Node is online")
-                    .show();
+                send_notification("OpenClaw Node is online");
             }
         }
     }
@@ -250,4 +241,16 @@ fn icon_from_png(bytes: &[u8]) -> Result<Icon> {
         .to_rgba8();
     let (width, height) = image.dimensions();
     Icon::from_rgba(image.into_raw(), width, height).map_err(|e| AppError::Tray(e.to_string()))
+}
+
+fn send_notification(body: &str) {
+    match Notification::new()
+        .appname("OpenClaw Node Widget")
+        .summary("OpenClaw Node Widget")
+        .body(body)
+        .show()
+    {
+        Ok(_) => tracing::debug!("notification sent: {body}"),
+        Err(e) => tracing::warn!("notification failed: {e}"),
+    }
 }
