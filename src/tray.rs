@@ -84,18 +84,26 @@ impl TrayState {
             .build()
             .map_err(|e| AppError::Tray(e.to_string()))?;
 
+        let refresh_id = refresh_item.id().clone();
+        let restart_id = restart_item.id().clone();
+        let stop_id = stop_item.id().clone();
+        let settings_id = settings_item.id().clone();
+        let exit_id = exit_item.id().clone();
+        let auto_restart_id = auto_restart_item.id().clone();
+        let auto_start_id = auto_start_item.id().clone();
+
         Ok(Self {
             tray,
             status_item,
             auto_restart_item,
             auto_start_item,
-            refresh_id: refresh_item.id().clone(),
-            restart_id: restart_item.id().clone(),
-            stop_id: stop_item.id().clone(),
-            settings_id: settings_item.id().clone(),
-            exit_id: exit_item.id().clone(),
-            auto_restart_id: auto_restart_item.id().clone(),
-            auto_start_id: auto_start_item.id().clone(),
+            refresh_id,
+            restart_id,
+            stop_id,
+            settings_id,
+            exit_id,
+            auto_restart_id,
+            auto_start_id,
             cmd_tx,
         })
     }
@@ -111,9 +119,7 @@ impl TrayState {
             None => format!("Status: {detail}"),
         };
 
-        self.status_item
-            .set_text(&label)
-            .map_err(|e| AppError::Tray(e.to_string()))?;
+        self.status_item.set_text(&label);
         self.tray
             .set_icon(Some(icon_for_status(status)?))
             .map_err(|e| AppError::Tray(e.to_string()))?;
@@ -123,16 +129,12 @@ impl TrayState {
         Ok(())
     }
 
-    pub fn set_auto_restart(&mut self, enabled: bool) -> Result<()> {
-        self.auto_restart_item
-            .set_checked(enabled)
-            .map_err(|e| AppError::Tray(e.to_string()))
+    pub fn set_auto_restart(&mut self, enabled: bool) {
+        self.auto_restart_item.set_checked(enabled);
     }
 
-    pub fn set_auto_start(&mut self, enabled: bool) -> Result<()> {
-        self.auto_start_item
-            .set_checked(enabled)
-            .map_err(|e| AppError::Tray(e.to_string()))
+    pub fn set_auto_start(&mut self, enabled: bool) {
+        self.auto_start_item.set_checked(enabled);
     }
 
     pub fn poll_menu_events(&self) {

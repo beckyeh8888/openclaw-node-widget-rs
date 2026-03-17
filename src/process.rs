@@ -1,6 +1,6 @@
 use std::{path::PathBuf, process::Stdio, time::Duration};
 
-use sysinfo::{ProcessesToUpdate, System};
+use sysinfo::System;
 
 use crate::{
     config::Config,
@@ -15,13 +15,13 @@ pub struct NodeProcessInfo {
 
 pub fn detect_node() -> Result<Option<NodeProcessInfo>> {
     let mut system = System::new_all();
-    let _ = system.refresh_processes(ProcessesToUpdate::All, true);
+    system.refresh_processes();
 
     for process in system.processes().values() {
         let cmdline = process
             .cmd()
             .iter()
-            .map(|v| v.to_string_lossy().to_string())
+            .map(|v| v.to_string())
             .collect::<Vec<_>>()
             .join(" ")
             .to_lowercase();

@@ -14,7 +14,7 @@ use tracing_subscriber::EnvFilter;
 use crate::{
     config::Config,
     gateway::spawn_gateway,
-    monitor::{spawn_monitor, MonitorCommand, NodeStatus},
+    monitor::{spawn_monitor, MonitorCommand},
     tray::{TrayCommand, TrayState},
 };
 
@@ -137,15 +137,15 @@ async fn run_with_tray(config: Config) -> error::Result<()> {
                 }
                 TrayCommand::ToggleAutoRestart(enabled) => {
                     let _ = monitor_cmd_tx.send(MonitorCommand::SetAutoRestart(enabled));
-                    tray.set_auto_restart(enabled)?;
+                    tray.set_auto_restart(enabled);
                 }
                 TrayCommand::ToggleAutoStart(enabled) => match autostart::set_autostart(enabled) {
                     Ok(()) => {
-                        tray.set_auto_start(enabled)?;
+                        tray.set_auto_start(enabled);
                     }
                     Err(err) => {
                         error!("failed to toggle autostart: {err}");
-                        tray.set_auto_start(!enabled)?;
+                        tray.set_auto_start(!enabled);
                     }
                 },
                 TrayCommand::Settings => {
