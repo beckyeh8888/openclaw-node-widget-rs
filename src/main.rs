@@ -1,3 +1,6 @@
+// Hide console window on Windows when not running from terminal
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod autostart;
 mod config;
 mod error;
