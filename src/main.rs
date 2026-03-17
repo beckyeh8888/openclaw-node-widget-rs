@@ -192,7 +192,10 @@ async fn run_with_tray(config: Config) -> error::Result<()> {
                     }
                 },
                 TrayCommand::Settings => {
-                    info!("settings action requested");
+                    if let Ok(path) = config::config_path() {
+                        info!("opening config: {}", path.display());
+                        let _ = open::that(&path);
+                    }
                 }
                 TrayCommand::Exit => return Ok(()),
             }
