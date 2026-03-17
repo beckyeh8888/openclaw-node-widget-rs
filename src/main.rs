@@ -13,7 +13,6 @@ use tracing_subscriber::EnvFilter;
 
 use crate::{
     config::Config,
-    gateway::spawn_gateway,
     monitor::{spawn_monitor, MonitorCommand},
     tray::{TrayCommand, TrayState},
 };
@@ -101,11 +100,10 @@ fn init_tracing(config: &Config) {
 async fn run_with_tray(config: Config) -> error::Result<()> {
     let (tray_cmd_tx, mut tray_cmd_rx) = mpsc::unbounded_channel();
     let (monitor_cmd_tx, monitor_cmd_rx) = mpsc::unbounded_channel();
-    let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
-    spawn_gateway(config.clone(), gateway_tx);
-    spawn_monitor(config.clone(), monitor_cmd_rx, gateway_rx, status_tx);
+    // Phase 1: process detection only, no gateway WebSocket
+    spawn_monitor(config.clone(), monitor_cmd_rx, status_tx);
 
     let mut tray = TrayState::new(
         tray_cmd_tx,
@@ -119,8 +117,8 @@ async fn run_with_tray(config: Config) -> error::Result<()> {
         while let Ok(update) = status_rx.try_recv() {
             tray.update_status(update.node_status, &update.detail, update.pid)?;
             info!(
-                "status update: node={:?} gateway={:?} detail={}",
-                update.node_status, update.connection_state, update.detail
+                "status update: node={:?} detail={}",
+                update.node_status, update.detail
             );
         }
 
@@ -162,16 +160,15 @@ async fn run_with_tray(config: Config) -> error::Result<()> {
 async fn run_daemon(config: Config) -> error::Result<()> {
     let (_tray_cmd_tx, _tray_cmd_rx) = mpsc::unbounded_channel::<TrayCommand>();
     let (_monitor_cmd_tx, monitor_cmd_rx) = mpsc::unbounded_channel();
-    let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
-    spawn_gateway(config.clone(), gateway_tx);
-    spawn_monitor(config, monitor_cmd_rx, gateway_rx, status_tx);
+    // Phase 1: process detection only
+    spawn_monitor(config, monitor_cmd_rx, status_tx);
 
     while let Some(update) = status_rx.recv().await {
         println!(
-            "Node: {:?}, Gateway: {:?}, Detail: {}",
-            update.node_status, update.connection_state, update.detail
+            "Node: {:?}, Detail: {}",
+            update.node_status, update.detail
         );
     }
 
