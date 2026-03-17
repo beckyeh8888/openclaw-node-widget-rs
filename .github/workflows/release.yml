@@ -1,0 +1,137 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: openclaw-node-widget
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+      - name: Create ZIP
+        run: |
+          mkdir dist
+          copy target\release\openclaw-node-widget-rs.exe dist\${{ env.BINARY_NAME }}.exe
+          Compress-Archive -Path dist\${{ env.BINARY_NAME }}.exe -DestinationPath ${{ env.BINARY_NAME }}-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: ${{ env.BINARY_NAME }}-windows-x64.zip
+
+  build-macos-intel:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+      - name: Create archive
+        run: |
+          mkdir -p dist
+          cp target/release/openclaw-node-widget-rs dist/${{ env.BINARY_NAME }}
+          chmod +x dist/${{ env.BINARY_NAME }}
+          cd dist && tar czf ../${{ env.BINARY_NAME }}-macos-x64.tar.gz ${{ env.BINARY_NAME }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-x64
+          path: ${{ env.BINARY_NAME }}-macos-x64.tar.gz
+
+  build-macos-arm:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+      - name: Create archive
+        run: |
+          mkdir -p dist
+          cp target/release/openclaw-node-widget-rs dist/${{ env.BINARY_NAME }}
+          chmod +x dist/${{ env.BINARY_NAME }}
+          cd dist && tar czf ../${{ env.BINARY_NAME }}-macos-arm64.tar.gz ${{ env.BINARY_NAME }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64
+          path: ${{ env.BINARY_NAME }}-macos-arm64.tar.gz
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config libgtk-3-dev libayatana-appindicator3-dev
+      - name: Build
+        run: cargo build --release
+      - name: Create archives
+        run: |
+          mkdir -p dist
+          cp target/release/openclaw-node-widget-rs dist/${{ env.BINARY_NAME }}
+          chmod +x dist/${{ env.BINARY_NAME }}
+          cd dist && tar czf ../${{ env.BINARY_NAME }}-linux-x64.tar.gz ${{ env.BINARY_NAME }}
+      - name: Create deb package
+        run: |
+          mkdir -p deb/DEBIAN
+          mkdir -p deb/usr/bin
+          mkdir -p deb/usr/share/applications
+          cp target/release/openclaw-node-widget-rs deb/usr/bin/${{ env.BINARY_NAME }}
+          chmod +x deb/usr/bin/${{ env.BINARY_NAME }}
+          cat > deb/DEBIAN/control << 'EOF'
+          Package: openclaw-node-widget
+          Version: 0.1.0
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: Beck Yeh <beck.yeh8@gmail.com>
+          Description: OpenClaw Node system tray widget
+           Monitor and control OpenClaw Node from the system tray.
+          EOF
+          cat > deb/usr/share/applications/openclaw-node-widget.desktop << 'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=OpenClaw Node Widget
+          Exec=/usr/bin/openclaw-node-widget
+          Terminal=false
+          Categories=Utility;
+          EOF
+          dpkg-deb --build deb ${{ env.BINARY_NAME }}-linux-x64.deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: |
+            ${{ env.BINARY_NAME }}-linux-x64.tar.gz
+            ${{ env.BINARY_NAME }}-linux-x64.deb
+
+  release:
+    needs: [build-windows, build-macos-intel, build-macos-arm, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: List artifacts
+        run: ls -la
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            openclaw-node-widget-windows-x64.zip
+            openclaw-node-widget-macos-x64.tar.gz
+            openclaw-node-widget-macos-arm64.tar.gz
+            openclaw-node-widget-linux-x64.tar.gz
+            openclaw-node-widget-linux-x64.deb
+          generate_release_notes: true
