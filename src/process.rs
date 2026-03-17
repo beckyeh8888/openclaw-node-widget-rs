@@ -43,8 +43,12 @@ pub fn start_node(config: &Config) -> Result<()> {
         .next()
         .ok_or_else(|| AppError::Process("node.command is empty".to_string()))?;
 
+    let extra_parts: Vec<&str> = parts.collect();
+    tracing::info!("start_node: binary={:?} extra_parts={:?} args={:?} working_dir={:?}",
+        binary, extra_parts, config.node.args, config.node.working_dir);
+
     let mut cmd = std::process::Command::new(binary);
-    cmd.args(parts);
+    cmd.args(&extra_parts);
     cmd.args(&config.node.args);
 
     if let Some(workdir) = working_directory(config) {
@@ -68,7 +72,7 @@ pub fn start_node(config: &Config) -> Result<()> {
     }
 
     cmd.stdin(Stdio::null());
-    cmd.spawn().map_err(|e| AppError::Process(e.to_string()))?;
+    cmd.spawn().map_err(|e| AppError::Process(format!("spawn {:?} failed: {}", binary, e)))?;
     Ok(())
 }
 
