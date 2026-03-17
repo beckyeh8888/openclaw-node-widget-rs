@@ -9,6 +9,7 @@ mod monitor;
 mod process;
 mod setup;
 mod tray;
+mod wizard;
 
 use clap::{Parser, Subcommand};
 use tokio::sync::mpsc;
@@ -59,6 +60,7 @@ async fn main() {
 async fn run() -> error::Result<i32> {
     let cli = Cli::parse();
     let command = cli.command.unwrap_or(Commands::Run);
+    let config_exists = config_path()?.exists();
 
     let mut config = Config::load()?;
 
@@ -79,7 +81,14 @@ async fn run() -> error::Result<i32> {
                 }
             };
 
-            setup::maybe_run_setup(&mut config)?;
+            if !config_exists {
+                match wizard::run_setup_wizard(&config)? {
+                    Some(saved_config) => {
+                        config = saved_config;
+                    }
+                    None => return Ok(0),
+                }
+            }
             init_tracing(&config);
             run_with_tray(config).await?;
             Ok(0)
@@ -93,7 +102,6 @@ async fn run() -> error::Result<i32> {
                 }
             };
 
-            setup::maybe_run_setup(&mut config)?;
             init_tracing(&config);
             run_daemon(config).await?;
             Ok(0)
@@ -115,7 +123,11 @@ async fn run() -> error::Result<i32> {
             Ok(0)
         }
         Commands::Setup => {
-            setup::force_run_setup(&mut config)?;
+            if wizard::run_setup_wizard(&config)?.is_some() {
+                println!("Setup complete.");
+            } else {
+                println!("Setup canceled.");
+            }
             Ok(0)
         }
     }
@@ -127,7 +139,7 @@ fn init_tracing(config: &Config) {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
-async fn run_with_tray(config: Config) -> error::Result<()> {
+async fn run_with_tray(mut config: Config) -> error::Result<()> {
     let (tray_cmd_tx, mut tray_cmd_rx) = mpsc::unbounded_channel();
     let (monitor_cmd_tx, monitor_cmd_rx) = mpsc::unbounded_channel();
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
@@ -198,6 +210,12 @@ async fn run_with_tray(config: Config) -> error::Result<()> {
                     if let Ok(path) = config::config_path() {
                         info!("opening config: {}", path.display());
                         let _ = open::that(&path);
+                    }
+                }
+                TrayCommand::SetupWizard => {
+                    if let Some(saved_config) = wizard::run_setup_wizard(&config)? {
+                        config = saved_config;
+                        tray.set_auto_start(autostart::effective_autostart(&config));
                     }
                 }
                 TrayCommand::Exit => return Ok(()),

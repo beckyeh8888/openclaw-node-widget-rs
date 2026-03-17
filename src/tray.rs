@@ -19,6 +19,7 @@ pub enum TrayCommand {
     ToggleAutoRestart(bool),
     ToggleAutoStart(bool),
     Settings,
+    SetupWizard,
     Exit,
 }
 
@@ -31,6 +32,7 @@ pub struct TrayState {
     restart_id: MenuId,
     stop_id: MenuId,
     settings_id: MenuId,
+    setup_wizard_id: MenuId,
     exit_id: MenuId,
     auto_restart_id: MenuId,
     auto_start_id: MenuId,
@@ -56,6 +58,7 @@ impl TrayState {
         let auto_restart_item = CheckMenuItem::new("Auto-restart", true, auto_restart, None);
         let auto_start_item = CheckMenuItem::new("Auto-start", true, auto_start, None);
         let settings_item = MenuItem::new("Settings", true, None);
+        let setup_wizard_item = MenuItem::new("Setup Wizard...", true, None);
         let exit_item = MenuItem::new("Exit", true, None);
 
         menu.append(&status_item)
@@ -78,6 +81,8 @@ impl TrayState {
             .map_err(|e| AppError::Tray(e.to_string()))?;
         menu.append(&settings_item)
             .map_err(|e| AppError::Tray(e.to_string()))?;
+        menu.append(&setup_wizard_item)
+            .map_err(|e| AppError::Tray(e.to_string()))?;
         menu.append(&exit_item)
             .map_err(|e| AppError::Tray(e.to_string()))?;
 
@@ -93,6 +98,7 @@ impl TrayState {
         let restart_id = restart_item.id().clone();
         let stop_id = stop_item.id().clone();
         let settings_id = settings_item.id().clone();
+        let setup_wizard_id = setup_wizard_item.id().clone();
         let exit_id = exit_item.id().clone();
         let auto_restart_id = auto_restart_item.id().clone();
         let auto_start_id = auto_start_item.id().clone();
@@ -106,6 +112,7 @@ impl TrayState {
             restart_id,
             stop_id,
             settings_id,
+            setup_wizard_id,
             exit_id,
             auto_restart_id,
             auto_start_id,
@@ -188,6 +195,10 @@ impl TrayState {
         }
         if id == self.settings_id {
             let _ = self.cmd_tx.send(TrayCommand::Settings);
+            return;
+        }
+        if id == self.setup_wizard_id {
+            let _ = self.cmd_tx.send(TrayCommand::SetupWizard);
             return;
         }
         if id == self.exit_id {

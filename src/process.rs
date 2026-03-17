@@ -32,7 +32,9 @@ pub fn detect_node() -> Result<Option<NodeProcessInfo>> {
             .to_lowercase();
 
         // Match "openclaw node run" but NOT "openclaw-node-widget"
-        if cmdline.contains("openclaw") && cmdline.contains("node") && cmdline.contains("run")
+        if cmdline.contains("openclaw")
+            && cmdline.contains("node")
+            && cmdline.contains("run")
             && !cmdline.contains("widget")
         {
             return Ok(Some(NodeProcessInfo {
