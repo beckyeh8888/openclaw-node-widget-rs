@@ -317,10 +317,14 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
         }
     });
 
+    let connect_json = connect_frame.to_string();
+    info!(frame_len = connect_json.len(), "sending connect frame");
+    debug!(connect_frame = %connect_json, "connect frame payload");
     write
-        .send(Message::Text(connect_frame.to_string().into()))
+        .send(Message::Text(connect_json.into()))
         .await
         .map_err(|e| ConnectError::Retryable(format!("connect request send failed: {e}")))?;
+    info!("connect frame sent, waiting for response...");
 
     loop {
         let Some(message) = read.next().await else {
@@ -334,6 +338,7 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
 
         match message {
             Message::Text(text) => {
+                debug!(response = %text, "connect response frame");
                 let frame = parse_frame(&text)?;
                 if frame_type(&frame) == Some("res") {
                     let id = frame.get("id").and_then(Value::as_str).unwrap_or_default();
