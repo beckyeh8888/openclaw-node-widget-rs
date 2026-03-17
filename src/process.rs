@@ -15,8 +15,14 @@ pub struct NodeProcessInfo {
 pub fn detect_node() -> Result<Option<NodeProcessInfo>> {
     let mut system = System::new_all();
     system.refresh_processes();
+    let my_pid = std::process::id();
 
     for process in system.processes().values() {
+        // Skip ourselves
+        if process.pid().as_u32() == my_pid {
+            continue;
+        }
+
         let cmdline = process
             .cmd()
             .iter()
@@ -25,7 +31,10 @@ pub fn detect_node() -> Result<Option<NodeProcessInfo>> {
             .join(" ")
             .to_lowercase();
 
-        if cmdline.contains("openclaw") && cmdline.contains("node") && cmdline.contains("run") {
+        // Match "openclaw node run" but NOT "openclaw-node-widget"
+        if cmdline.contains("openclaw") && cmdline.contains("node") && cmdline.contains("run")
+            && !cmdline.contains("widget")
+        {
             return Ok(Some(NodeProcessInfo {
                 pid: process.pid().as_u32() as i32,
             }));
