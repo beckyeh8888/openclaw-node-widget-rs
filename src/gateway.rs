@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::config;
@@ -383,12 +383,18 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                     .map_err(|e| ConnectError::Retryable(format!("pong failed: {e}")))?;
             }
             Message::Close(close_frame) => {
-                let reason = close_frame
-                    .map(|f| f.reason.to_string())
-                    .unwrap_or_else(|| "gateway closed".to_string());
-                return Err(ConnectError::Retryable(reason));
+                let (code, reason) = match &close_frame {
+                    Some(f) => (f.code.into(), f.reason.to_string()),
+                    None => (0u16, "no close frame".to_string()),
+                };
+                warn!(code, reason = %reason, "gateway sent close frame after connect");
+                return Err(ConnectError::Retryable(format!(
+                    "gateway closed (code={code}): {reason}"
+                )));
             }
-            _ => {}
+            other => {
+                debug!(?other, "unexpected message type during connect");
+            }
         }
     }
 
