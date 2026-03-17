@@ -18,9 +18,8 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GatewayConfig {
-    pub url: String,
-    pub token: String,
-    pub connect_timeout_secs: u64,
+    pub url: Option<String>,
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,9 +85,8 @@ impl Default for Config {
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
-            url: "ws://localhost:3000".to_string(),
-            token: String::new(),
-            connect_timeout_secs: 5,
+            url: None,
+            token: None,
         }
     }
 }

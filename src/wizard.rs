@@ -93,7 +93,7 @@ impl SetupWizardApp {
             npm_available: false,
             host: String::new(),
             port: String::new(),
-            token: base_config.gateway.token.clone(),
+            token: base_config.gateway.token.clone().unwrap_or_default(),
             node_command: display_node_command(&base_config),
             auto_start: if config_exists() {
                 autostart::effective_autostart(&base_config)
@@ -107,7 +107,8 @@ impl SetupWizardApp {
         };
 
         if app.host.is_empty() || app.port.is_empty() {
-            let (host, port) = split_gateway_url(&app.base_config.gateway.url);
+            let (host, port) =
+                split_gateway_url(app.base_config.gateway.url.as_deref().unwrap_or_default());
             if app.host.is_empty() {
                 app.host = host;
             }
@@ -233,8 +234,12 @@ impl SetupWizardApp {
         }
 
         let mut config = self.base_config.clone();
-        config.gateway.url = format!("ws://{host}:{port}");
-        config.gateway.token = self.token.trim().to_string();
+        config.gateway.url = Some(format!("ws://{host}:{port}"));
+        config.gateway.token = if self.token.trim().is_empty() {
+            None
+        } else {
+            Some(self.token.trim().to_string())
+        };
         config.startup.auto_start = self.auto_start;
         apply_node_command(&mut config, node_command);
 

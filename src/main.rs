@@ -4,6 +4,7 @@
 mod autostart;
 mod config;
 mod error;
+mod gateway;
 mod lock;
 mod monitor;
 mod process;
@@ -65,10 +66,10 @@ async fn run() -> error::Result<i32> {
     let mut config = Config::load()?;
 
     if let Some(url) = cli.gateway {
-        config.gateway.url = url;
+        config.gateway.url = Some(url);
     }
     if let Some(token) = cli.token {
-        config.gateway.token = token;
+        config.gateway.token = Some(token);
     }
 
     match command {
@@ -143,8 +144,27 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     let (tray_cmd_tx, mut tray_cmd_rx) = mpsc::unbounded_channel();
     let (monitor_cmd_tx, monitor_cmd_rx) = mpsc::unbounded_channel();
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
+    let (gateway_event_tx, mut gateway_event_rx) = mpsc::unbounded_channel();
+    let (gateway_monitor_tx, gateway_monitor_rx) = mpsc::unbounded_channel();
 
-    spawn_monitor(config.clone(), monitor_cmd_rx, status_tx);
+    let gateway_enabled = gateway::spawn_if_configured(
+        config.gateway.url.clone(),
+        config.gateway.token.clone(),
+        gateway_event_tx,
+    )
+    .await;
+
+    spawn_monitor(
+        config.clone(),
+        monitor_cmd_rx,
+        status_tx,
+        if gateway_enabled {
+            Some(gateway_monitor_rx)
+        } else {
+            None
+        },
+        gateway_enabled,
+    );
 
     let mut tray = TrayState::new(
         tray_cmd_tx,
@@ -152,6 +172,7 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
         autostart::effective_autostart(&config),
         config.widget.notifications,
     )?;
+    tray.set_gateway_configured(gateway_enabled)?;
 
     loop {
         #[cfg(windows)]
@@ -167,6 +188,11 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
         }
 
         tray.poll_menu_events();
+
+        while let Ok(event) = gateway_event_rx.try_recv() {
+            tray.handle_gateway_event(&event)?;
+            let _ = gateway_monitor_tx.send(event.clone());
+        }
 
         while let Ok(update) = status_rx.try_recv() {
             tray.update_status(
@@ -230,14 +256,41 @@ async fn run_daemon(config: Config) -> error::Result<()> {
     let (_tray_cmd_tx, _tray_cmd_rx) = mpsc::unbounded_channel::<TrayCommand>();
     let (_monitor_cmd_tx, monitor_cmd_rx) = mpsc::unbounded_channel();
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
+    let (gateway_event_tx, mut gateway_event_rx) = mpsc::unbounded_channel();
+    let (gateway_monitor_tx, gateway_monitor_rx) = mpsc::unbounded_channel();
 
-    spawn_monitor(config, monitor_cmd_rx, status_tx);
+    let gateway_enabled = gateway::spawn_if_configured(
+        config.gateway.url.clone(),
+        config.gateway.token.clone(),
+        gateway_event_tx,
+    )
+    .await;
 
-    while let Some(update) = status_rx.recv().await {
-        println!(
-            "Node: {:?}, CrashLoop: {}, Detail: {}",
-            update.node_status, update.crash_loop, update.detail
-        );
+    spawn_monitor(
+        config,
+        monitor_cmd_rx,
+        status_tx,
+        if gateway_enabled {
+            Some(gateway_monitor_rx)
+        } else {
+            None
+        },
+        gateway_enabled,
+    );
+
+    loop {
+        tokio::select! {
+            Some(event) = gateway_event_rx.recv() => {
+                let _ = gateway_monitor_tx.send(event);
+            }
+            Some(update) = status_rx.recv() => {
+                println!(
+                    "Node: {:?}, CrashLoop: {}, Detail: {}",
+                    update.node_status, update.crash_loop, update.detail
+                );
+            }
+            else => break,
+        }
     }
 
     Ok(())
@@ -257,7 +310,15 @@ fn run_status() -> error::Result<i32> {
         Err(err) => println!("Node: Unknown ({err})"),
     }
 
-    println!("Gateway: {}", config.gateway.url);
+    println!(
+        "Gateway: {}",
+        config
+            .gateway
+            .url
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .unwrap_or("(not configured)")
+    );
     println!(
         "Auto-restart: {}",
         if config.widget.auto_restart {
