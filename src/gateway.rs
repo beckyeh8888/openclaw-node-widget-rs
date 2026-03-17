@@ -330,17 +330,22 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
 
     loop {
         let Some(message) = read.next().await else {
+            info!("gateway stream ended during connect (no more frames)");
             return Err(ConnectError::Retryable(
                 "gateway closed during connect".to_string(),
             ));
         };
 
-        let message =
-            message.map_err(|e| ConnectError::Retryable(format!("gateway read failed: {e}")))?;
+        let message = message.map_err(|e| {
+            info!(error = %e, "gateway read error during connect");
+            ConnectError::Retryable(format!("gateway read failed: {e}"))
+        })?;
+
+        info!(msg_type = ?message, "received message during connect response");
 
         match message {
             Message::Text(text) => {
-                debug!(response = %text, "connect response frame");
+                info!(response = %text, "connect response frame");
                 let frame = parse_frame(&text)?;
                 if frame_type(&frame) == Some("res") {
                     let id = frame.get("id").and_then(Value::as_str).unwrap_or_default();
@@ -387,13 +392,13 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                     Some(f) => (f.code.into(), f.reason.to_string()),
                     None => (0u16, "no close frame".to_string()),
                 };
-                warn!(code, reason = %reason, "gateway sent close frame after connect");
+                info!(code, reason = %reason, "gateway sent close frame after connect");
                 return Err(ConnectError::Retryable(format!(
                     "gateway closed (code={code}): {reason}"
                 )));
             }
             other => {
-                debug!(?other, "unexpected message type during connect");
+                info!(?other, "unexpected message type during connect");
             }
         }
     }
