@@ -198,6 +198,8 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
         .await
         .map_err(|e| ConnectError::Retryable(format!("connect failed: {e}")))?;
 
+    info!("gateway websocket connected, waiting for challenge...");
+
     let (mut write, mut read) = stream.split();
 
     let challenge_frame = timeout(Duration::from_secs(10), async {
