@@ -1,4 +1,5 @@
 use image::ImageFormat;
+use notify_rust::Notification;
 use tokio::sync::mpsc;
 use tray_icon::{
     menu::{CheckMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
@@ -7,7 +8,7 @@ use tray_icon::{
 
 use crate::{
     error::{AppError, Result},
-    monitor::NodeStatus,
+    monitor::{NodeStatus, StopReason},
 };
 
 #[derive(Debug, Clone)]
@@ -34,6 +35,9 @@ pub struct TrayState {
     auto_restart_id: MenuId,
     auto_start_id: MenuId,
     cmd_tx: mpsc::UnboundedSender<TrayCommand>,
+    notifications_enabled: bool,
+    last_status: Option<NodeStatus>,
+    last_crash_loop: bool,
 }
 
 impl TrayState {
@@ -41,6 +45,7 @@ impl TrayState {
         cmd_tx: mpsc::UnboundedSender<TrayCommand>,
         auto_restart: bool,
         auto_start: bool,
+        notifications_enabled: bool,
     ) -> Result<Self> {
         let menu = Menu::new();
 
@@ -105,6 +110,9 @@ impl TrayState {
             auto_restart_id,
             auto_start_id,
             cmd_tx,
+            notifications_enabled,
+            last_status: None,
+            last_crash_loop: false,
         })
     }
 
@@ -113,10 +121,26 @@ impl TrayState {
         status: NodeStatus,
         detail: &str,
         pid: Option<i32>,
+        crash_loop: bool,
+        stop_reason: StopReason,
     ) -> Result<()> {
+        let (status_text, tooltip_text) = if crash_loop {
+            (
+                "Node crash loop detected - auto-restart paused".to_string(),
+                "Node crash loop detected - auto-restart paused".to_string(),
+            )
+        } else if status == NodeStatus::Offline && stop_reason == StopReason::Manual {
+            (
+                "Node stopped (manual)".to_string(),
+                "Node stopped (manual)".to_string(),
+            )
+        } else {
+            (detail.to_string(), detail.to_string())
+        };
+
         let label = match pid {
-            Some(pid) => format!("Status: {detail} (PID {pid})"),
-            None => format!("Status: {detail}"),
+            Some(pid) => format!("Status: {status_text} (PID {pid})"),
+            None => format!("Status: {status_text}"),
         };
 
         self.status_item.set_text(&label);
@@ -124,8 +148,13 @@ impl TrayState {
             .set_icon(Some(icon_for_status(status)?))
             .map_err(|e| AppError::Tray(e.to_string()))?;
         self.tray
-            .set_tooltip(Some(format!("OpenClaw Node: {detail}")))
+            .set_tooltip(Some(format!("OpenClaw Node: {tooltip_text}")))
             .map_err(|e| AppError::Tray(e.to_string()))?;
+
+        self.notify_transitions(status, crash_loop);
+        self.last_status = Some(status);
+        self.last_crash_loop = crash_loop;
+
         Ok(())
     }
 
@@ -173,6 +202,34 @@ impl TrayState {
         if id == self.auto_start_id {
             let checked = !self.auto_start_item.is_checked();
             let _ = self.cmd_tx.send(TrayCommand::ToggleAutoStart(checked));
+        }
+    }
+
+    fn notify_transitions(&self, status: NodeStatus, crash_loop: bool) {
+        if !self.notifications_enabled {
+            return;
+        }
+
+        if !self.last_crash_loop && crash_loop {
+            let _ = Notification::new()
+                .summary("OpenClaw Node Widget")
+                .body("Node crash loop detected")
+                .show();
+        }
+
+        if let Some(previous) = self.last_status {
+            if previous == NodeStatus::Online && status == NodeStatus::Offline {
+                let _ = Notification::new()
+                    .summary("OpenClaw Node Widget")
+                    .body("OpenClaw Node went offline")
+                    .show();
+            }
+            if previous == NodeStatus::Offline && status == NodeStatus::Online {
+                let _ = Notification::new()
+                    .summary("OpenClaw Node Widget")
+                    .body("OpenClaw Node is online")
+                    .show();
+            }
         }
     }
 }

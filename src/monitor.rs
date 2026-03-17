@@ -12,11 +12,20 @@ pub enum NodeStatus {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopReason {
+    Manual,
+    CrashLoop,
+    Unknown,
+}
+
 #[derive(Debug, Clone)]
 pub struct StatusUpdate {
     pub node_status: NodeStatus,
     pub pid: Option<i32>,
     pub detail: String,
+    pub crash_loop: bool,
+    pub stop_reason: StopReason,
 }
 
 #[derive(Debug, Clone)]
@@ -36,39 +45,84 @@ pub fn spawn_monitor(
         let mut ticker =
             tokio::time::interval(Duration::from_secs(config.widget.check_interval_secs));
         let mut offline_count = 0u32;
+        let mut offline_since: Option<Instant> = None;
         let mut stop_cooldown_until: Option<Instant> = None;
         let mut restart_failures = 0u32;
         let mut auto_restart = config.widget.auto_restart;
+        let mut crash_loop = false;
+        let mut stop_reason = StopReason::Unknown;
 
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    let (status, pid, detail) = match process::detect_node() {
+                    let mut detail = "Offline".to_string();
+                    let (status, pid) = match process::detect_node() {
                         Ok(Some(proc_info)) => {
-                            (NodeStatus::Online, Some(proc_info.pid), format!("Online (PID {})", proc_info.pid))
+                            detail = format!("Online (PID {})", proc_info.pid);
+                            (NodeStatus::Online, Some(proc_info.pid))
                         }
                         Ok(None) => {
-                            (NodeStatus::Offline, None, "Offline".to_string())
+                            (NodeStatus::Offline, None)
                         }
                         Err(err) => {
                             warn!("process detection failed: {err}");
-                            (NodeStatus::Unknown, None, format!("Error: {err}"))
+                            detail = format!("Error: {err}");
+                            (NodeStatus::Unknown, None)
                         }
                     };
 
                     if status == NodeStatus::Offline {
                         offline_count = offline_count.saturating_add(1);
-                    } else {
+                        if offline_since.is_none() {
+                            offline_since = Some(Instant::now());
+                        }
+
+                        if stop_reason == StopReason::Manual {
+                            detail = "Node stopped (manual)".to_string();
+                        }
+
+                        if !crash_loop && restart_failures >= config.widget.max_restart_attempts {
+                            crash_loop = true;
+                            stop_reason = StopReason::CrashLoop;
+                            warn!("node crash loop detected: max restart attempts reached");
+                        }
+
+                        if !crash_loop {
+                            if let Some(since) = offline_since {
+                                if since.elapsed().as_secs() >= config.widget.crash_loop_secs {
+                                    crash_loop = true;
+                                    stop_reason = StopReason::CrashLoop;
+                                    warn!("node crash loop detected: offline threshold exceeded");
+                                }
+                            }
+                        }
+
+                        if crash_loop {
+                            detail = "Node crash loop detected - auto-restart paused".to_string();
+                        }
+                    } else if status == NodeStatus::Online {
                         offline_count = 0;
+                        offline_since = None;
                         restart_failures = 0;
+                        crash_loop = false;
+                        stop_reason = StopReason::Unknown;
                     }
 
-                    // Auto-restart logic
-                    if should_restart(auto_restart, offline_count, config.widget.restart_threshold, stop_cooldown_until, restart_failures, config.widget.max_restart_attempts) {
+                    if should_restart(
+                        auto_restart,
+                        crash_loop,
+                        offline_count,
+                        config.widget.restart_threshold,
+                        stop_cooldown_until,
+                        restart_failures,
+                        config.widget.max_restart_attempts,
+                    ) {
                         match process::start_node(&config) {
                             Ok(()) => {
                                 info!("node restart triggered by monitor");
                                 offline_count = 0;
+                                offline_since = None;
+                                stop_reason = StopReason::Unknown;
                             }
                             Err(err) => {
                                 restart_failures = restart_failures.saturating_add(1);
@@ -81,6 +135,8 @@ pub fn spawn_monitor(
                         node_status: status,
                         pid,
                         detail,
+                        crash_loop,
+                        stop_reason,
                     });
                 }
                 Some(cmd) = command_rx.recv() => {
@@ -90,17 +146,23 @@ pub fn spawn_monitor(
                                 node_status: NodeStatus::Unknown,
                                 pid: None,
                                 detail: "Refreshing...".to_string(),
+                                crash_loop,
+                                stop_reason,
                             });
                         }
                         MonitorCommand::RestartNode => {
+                            crash_loop = false;
+                            stop_reason = StopReason::Unknown;
+                            restart_failures = 0;
+                            stop_cooldown_until = None;
+                            offline_since = None;
+
                             if let Err(err) = process::stop_node() {
                                 warn!("manual stop before restart failed: {err}");
                             }
                             tokio::time::sleep(Duration::from_secs(2)).await;
                             match process::start_node(&config) {
                                 Ok(()) => {
-                                    restart_failures = 0;
-                                    stop_cooldown_until = None;
                                     info!("node manually restarted");
                                 }
                                 Err(err) => {
@@ -113,6 +175,7 @@ pub fn spawn_monitor(
                             match process::stop_node() {
                                 Ok(()) => {
                                     stop_cooldown_until = Some(Instant::now() + Duration::from_secs(config.widget.restart_cooldown_secs));
+                                    stop_reason = StopReason::Manual;
                                     info!("node manually stopped, cooldown {}s", config.widget.restart_cooldown_secs);
                                 }
                                 Err(err) => warn!("manual stop failed: {err}"),
@@ -132,13 +195,14 @@ pub fn spawn_monitor(
 
 fn should_restart(
     auto_restart: bool,
+    crash_loop: bool,
     offline_count: u32,
     threshold: u32,
     cooldown: Option<Instant>,
     restart_failures: u32,
     max_restart_attempts: u32,
 ) -> bool {
-    if !auto_restart || offline_count < threshold {
+    if !auto_restart || crash_loop || offline_count < threshold {
         return false;
     }
 

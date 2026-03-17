@@ -1,9 +1,10 @@
 mod autostart;
 mod config;
 mod error;
-mod gateway;
+mod lock;
 mod monitor;
 mod process;
+mod setup;
 mod tray;
 
 use clap::{Parser, Subcommand};
@@ -12,7 +13,8 @@ use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
-    config::Config,
+    config::{config_path, Config},
+    lock::{try_acquire_lock, AcquireResult},
     monitor::{spawn_monitor, MonitorCommand},
     tray::{TrayCommand, TrayState},
 };
@@ -42,14 +44,19 @@ enum Commands {
 
 #[tokio::main]
 async fn main() {
-    if let Err(err) = run().await {
-        error!("{err}");
-        std::process::exit(1);
+    match run().await {
+        Ok(code) => std::process::exit(code),
+        Err(err) => {
+            error!("{err}");
+            std::process::exit(1);
+        }
     }
 }
 
-async fn run() -> error::Result<()> {
+async fn run() -> error::Result<i32> {
     let cli = Cli::parse();
+    let command = cli.command.unwrap_or(Commands::Run);
+
     let mut config = Config::load()?;
 
     if let Some(url) = cli.gateway {
@@ -59,34 +66,54 @@ async fn run() -> error::Result<()> {
         config.gateway.token = token;
     }
 
-    init_tracing(&config);
+    match command {
+        Commands::Run => {
+            let _lock_guard = match try_acquire_lock()? {
+                AcquireResult::Acquired(guard) => guard,
+                AcquireResult::AlreadyRunning(pid) => {
+                    println!("Widget is already running (PID {pid})");
+                    return Ok(1);
+                }
+            };
 
-    match cli.command.unwrap_or(Commands::Run) {
-        Commands::Run => run_with_tray(config).await,
-        Commands::Daemon => run_daemon(config).await,
-        Commands::Status => {
-            run_status().await;
-            Ok(())
+            setup::maybe_run_setup(&mut config)?;
+            init_tracing(&config);
+            run_with_tray(config).await?;
+            Ok(0)
         }
+        Commands::Daemon => {
+            let _lock_guard = match try_acquire_lock()? {
+                AcquireResult::Acquired(guard) => guard,
+                AcquireResult::AlreadyRunning(pid) => {
+                    println!("Widget is already running (PID {pid})");
+                    return Ok(1);
+                }
+            };
+
+            setup::maybe_run_setup(&mut config)?;
+            init_tracing(&config);
+            run_daemon(config).await?;
+            Ok(0)
+        }
+        Commands::Status => run_status(),
         Commands::Stop => {
             process::stop_node()?;
             println!("Node stopped");
-            Ok(())
+            Ok(0)
         }
         Commands::Restart => {
             let _ = process::stop_node();
             process::start_node(&config)?;
             println!("Node restarted");
-            Ok(())
+            Ok(0)
         }
         Commands::Config => {
             println!("{}", toml::to_string_pretty(&config).unwrap_or_default());
-            Ok(())
+            Ok(0)
         }
         Commands::Setup => {
-            println!("setup wizard is not implemented in Phase 1");
-            config.save()?;
-            Ok(())
+            setup::force_run_setup(&mut config)?;
+            Ok(0)
         }
     }
 }
@@ -102,20 +129,16 @@ async fn run_with_tray(config: Config) -> error::Result<()> {
     let (monitor_cmd_tx, monitor_cmd_rx) = mpsc::unbounded_channel();
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
-    // Phase 1: process detection only, no gateway WebSocket
     spawn_monitor(config.clone(), monitor_cmd_rx, status_tx);
 
     let mut tray = TrayState::new(
         tray_cmd_tx,
         config.widget.auto_restart,
-        config.startup.auto_start || autostart::is_autostart_enabled(),
+        autostart::effective_autostart(&config),
+        config.widget.notifications,
     )?;
 
-    // On Windows, tray-icon requires a native message loop for right-click menus.
-    // We run the tray event processing on the main thread using a timer.
-    // The tokio runtime handles monitor tasks in the background.
     loop {
-        // Pump Windows messages (required for tray menu to appear)
         #[cfg(windows)]
         unsafe {
             use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -131,10 +154,16 @@ async fn run_with_tray(config: Config) -> error::Result<()> {
         tray.poll_menu_events();
 
         while let Ok(update) = status_rx.try_recv() {
-            tray.update_status(update.node_status, &update.detail, update.pid)?;
+            tray.update_status(
+                update.node_status,
+                &update.detail,
+                update.pid,
+                update.crash_loop,
+                update.stop_reason,
+            )?;
             info!(
-                "status update: node={:?} detail={}",
-                update.node_status, update.detail
+                "status update: node={:?} crash_loop={} detail={}",
+                update.node_status, update.crash_loop, update.detail
             );
         }
 
@@ -178,32 +207,46 @@ async fn run_daemon(config: Config) -> error::Result<()> {
     let (_monitor_cmd_tx, monitor_cmd_rx) = mpsc::unbounded_channel();
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
 
-    // Phase 1: process detection only
     spawn_monitor(config, monitor_cmd_rx, status_tx);
 
     while let Some(update) = status_rx.recv().await {
         println!(
-            "Node: {:?}, Detail: {}",
-            update.node_status, update.detail
+            "Node: {:?}, CrashLoop: {}, Detail: {}",
+            update.node_status, update.crash_loop, update.detail
         );
     }
 
     Ok(())
 }
 
-async fn run_status() {
+fn run_status() -> error::Result<i32> {
+    let config = Config::load()?;
+    let config_path = config_path()?;
+    let autostart = autostart::effective_autostart(&config);
+
+    println!("OpenClaw Node Widget v{}", env!("CARGO_PKG_VERSION"));
+    println!("Config: {}", config_path.display());
+
     match process::detect_node() {
-        Ok(Some(proc_info)) => {
-            println!("Node: Online (PID {})", proc_info.pid);
-            std::process::exit(0);
-        }
-        Ok(None) => {
-            println!("Node: Offline");
-            std::process::exit(1);
-        }
-        Err(err) => {
-            eprintln!("status check failed: {err}");
-            std::process::exit(1);
-        }
+        Ok(Some(proc_info)) => println!("Node: Online (PID {})", proc_info.pid),
+        Ok(None) => println!("Node: Offline"),
+        Err(err) => println!("Node: Unknown ({err})"),
     }
+
+    println!("Gateway: {}", config.gateway.url);
+    println!(
+        "Auto-restart: {}",
+        if config.widget.auto_restart {
+            "on"
+        } else {
+            "off"
+        }
+    );
+    println!("Auto-start: {}", if autostart { "on" } else { "off" });
+
+    let code = match process::detect_node() {
+        Ok(Some(_)) => 0,
+        _ => 1,
+    };
+    Ok(code)
 }

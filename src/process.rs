@@ -10,7 +10,6 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct NodeProcessInfo {
     pub pid: i32,
-    pub cmdline: String,
 }
 
 pub fn detect_node() -> Result<Option<NodeProcessInfo>> {
@@ -29,7 +28,6 @@ pub fn detect_node() -> Result<Option<NodeProcessInfo>> {
         if cmdline.contains("openclaw") && cmdline.contains("node") && cmdline.contains("run") {
             return Ok(Some(NodeProcessInfo {
                 pid: process.pid().as_u32() as i32,
-                cmdline,
             }));
         }
     }
@@ -44,8 +42,13 @@ pub fn start_node(config: &Config) -> Result<()> {
         .ok_or_else(|| AppError::Process("node.command is empty".to_string()))?;
 
     let extra_parts: Vec<&str> = parts.collect();
-    tracing::info!("start_node: binary={:?} extra_parts={:?} args={:?} working_dir={:?}",
-        binary, extra_parts, config.node.args, config.node.working_dir);
+    tracing::debug!(
+        "start_node: binary={:?} extra_parts={:?} args={:?} working_dir={:?}",
+        binary,
+        extra_parts,
+        config.node.args,
+        config.node.working_dir
+    );
 
     let mut cmd = std::process::Command::new(binary);
     cmd.args(&extra_parts);
@@ -72,7 +75,8 @@ pub fn start_node(config: &Config) -> Result<()> {
     }
 
     cmd.stdin(Stdio::null());
-    cmd.spawn().map_err(|e| AppError::Process(format!("spawn {:?} failed: {}", binary, e)))?;
+    cmd.spawn()
+        .map_err(|e| AppError::Process(format!("spawn {:?} failed: {}", binary, e)))?;
     Ok(())
 }
 

@@ -40,6 +40,8 @@ pub struct WidgetConfig {
     pub restart_threshold: u32,
     pub restart_cooldown_secs: u64,
     pub max_restart_attempts: u32,
+    pub crash_loop_secs: u64,
+    pub notifications: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +112,8 @@ impl Default for WidgetConfig {
             restart_threshold: 3,
             restart_cooldown_secs: 120,
             max_restart_attempts: 5,
+            crash_loop_secs: 300,
+            notifications: true,
         }
     }
 }
@@ -168,8 +172,12 @@ impl Config {
     }
 }
 
-pub fn config_path() -> Result<PathBuf> {
+pub fn app_dir() -> Result<PathBuf> {
     let config_dir = dirs::config_dir()
         .ok_or_else(|| AppError::Config("unable to resolve config directory".to_string()))?;
-    Ok(config_dir.join("openclaw-node-widget").join("config.toml"))
+    Ok(config_dir.join("openclaw-node-widget"))
+}
+
+pub fn config_path() -> Result<PathBuf> {
+    Ok(app_dir()?.join("config.toml"))
 }

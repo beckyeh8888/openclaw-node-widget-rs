@@ -4,8 +4,6 @@ use thiserror::Error;
 pub enum AppError {
     #[error("config error: {0}")]
     Config(String),
-    #[error("gateway error: {0}")]
-    Gateway(String),
     #[error("process error: {0}")]
     Process(String),
     #[error("io error: {0}")]
