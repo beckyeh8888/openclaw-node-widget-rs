@@ -230,14 +230,18 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
 
             match message {
                 Message::Text(text) => {
+                    debug!(raw_frame = %text, "received gateway frame");
                     let frame = parse_frame(&text)?;
-                    if frame_type(&frame) == Some("event")
-                        && frame_name(&frame) == Some("connect.challenge")
-                    {
+                    let ft = frame_type(&frame);
+                    let fn_ = frame_name(&frame);
+                    debug!(?ft, ?fn_, "parsed frame");
+                    if ft == Some("event") && fn_ == Some("connect.challenge") {
+                        info!("challenge received!");
                         return Ok(frame);
                     }
                 }
                 Message::Ping(payload) => {
+                    debug!("received ping");
                     write
                         .send(Message::Pong(payload))
                         .await
