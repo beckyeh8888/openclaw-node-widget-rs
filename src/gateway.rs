@@ -194,9 +194,24 @@ pub async fn connect_loop(client: GatewayClient) {
 
 async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
     info!(url = %client.url, "gateway connecting");
-    let (stream, _) = connect_async(&client.url)
+    let url = url::Url::parse(&client.url)
+        .map_err(|e| ConnectError::Fatal(format!("invalid gateway URL: {e}")))?;
+    let host = url.host_str().unwrap_or("127.0.0.1");
+    let port = url.port().unwrap_or(18789);
+    let addr = format!("{host}:{port}");
+
+    info!(%addr, "resolving tcp connection");
+    let tcp = tokio::net::TcpStream::connect(&addr)
         .await
-        .map_err(|e| ConnectError::Retryable(format!("connect failed: {e}")))?;
+        .map_err(|e| ConnectError::Retryable(format!("tcp connect failed: {e}")))?;
+
+    info!("tcp connected, starting websocket handshake");
+    let (stream, _) = tokio_tungstenite::client_async(
+        url.as_str(),
+        tcp,
+    )
+    .await
+    .map_err(|e| ConnectError::Retryable(format!("ws handshake failed: {e}")))?;
 
     info!("gateway websocket connected, waiting for challenge...");
 
