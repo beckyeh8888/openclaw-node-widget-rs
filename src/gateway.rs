@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
+use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, info};
 use uuid::Uuid;
 
@@ -93,8 +93,8 @@ pub fn load_or_create_keypair(config_dir: &Path) -> Result<(SigningKey, String, 
 }
 
 pub fn compute_device_id(public_key: &VerifyingKey) -> String {
-    let der = public_key_der(public_key);
-    let digest = Sha256::digest(der);
+    // Gateway derives deviceId from raw 32-byte public key (SPKI DER minus prefix)
+    let digest = Sha256::digest(public_key.as_bytes());
     hex::encode(digest)
 }
 
@@ -272,10 +272,10 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
     let platform = platform_name();
     let payload = build_signature_payload_v3(&SignatureParams {
         device_id: &client.device_id,
-        client_id: &client_id,
-        client_mode: "operator",
+        client_id: "gateway-client",
+        client_mode: "ui",
         role: "operator",
-        scopes: "operator.read",
+        scopes: "operator.admin",
         signed_at_ms,
         token: &token,
         nonce,
@@ -294,13 +294,15 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
             "minProtocol": 3,
             "maxProtocol": 3,
             "client": {
-                "id": client_id,
+                "id": "gateway-client",
                 "version": env!("CARGO_PKG_VERSION"),
                 "platform": platform,
-                "mode": "operator"
+                "deviceFamily": "desktop",
+                "mode": "ui",
+                "instanceId": client_id
             },
             "role": "operator",
-            "scopes": ["operator.read"],
+            "scopes": ["operator.admin"],
             "caps": [],
             "commands": [],
             "permissions": {},
