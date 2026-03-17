@@ -111,7 +111,23 @@ async fn run_with_tray(config: Config) -> error::Result<()> {
         config.startup.auto_start || autostart::is_autostart_enabled(),
     )?;
 
+    // On Windows, tray-icon requires a native message loop for right-click menus.
+    // We run the tray event processing on the main thread using a timer.
+    // The tokio runtime handles monitor tasks in the background.
     loop {
+        // Pump Windows messages (required for tray menu to appear)
+        #[cfg(windows)]
+        unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
+            };
+            let mut msg: MSG = std::mem::zeroed();
+            while PeekMessageW(&mut msg, 0, 0, 0, PM_REMOVE) != 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+
         tray.poll_menu_events();
 
         while let Ok(update) = status_rx.try_recv() {
@@ -153,7 +169,7 @@ async fn run_with_tray(config: Config) -> error::Result<()> {
             }
         }
 
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 }
 
