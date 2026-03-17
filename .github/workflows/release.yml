@@ -29,7 +29,7 @@ jobs:
           path: ${{ env.BINARY_NAME }}-windows-x64.zip
 
   build-macos-intel:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
