@@ -308,7 +308,7 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
         .map_err(|e| ConnectError::Retryable(format!("connect request send failed: {e}")))?;
     info!("connect frame sent, waiting for response...");
 
-    loop {
+    let hello_ok_frame: Value = loop {
         let Some(message) = read.next().await else {
             info!("gateway stream ended during connect (no more frames)");
             return Err(ConnectError::Retryable(
@@ -332,7 +332,7 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                     if id == connect_id {
                         let ok = frame.get("ok").and_then(Value::as_bool).unwrap_or(false);
                         if ok {
-                            break;
+                            break frame;
                         }
 
                         let reason = frame
@@ -381,11 +381,33 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                 info!(?other, "unexpected message type during connect");
             }
         }
+    };
+
+    // Parse node status from hello-ok snapshot
+    let hello_ok = &hello_ok_frame;
+    if let Some(snapshot_presence) = hello_ok
+        .get("payload")
+        .and_then(|p| p.get("snapshot"))
+        .and_then(|s| s.get("presence"))
+        .and_then(Value::as_array)
+    {
+        let node_online = snapshot_presence.iter().any(|p| {
+            let client_id = p.get("host").and_then(Value::as_str).unwrap_or_default();
+            let mode = p.get("mode").and_then(Value::as_str).unwrap_or_default();
+            let reason = p.get("reason").and_then(Value::as_str).unwrap_or_default();
+            // Node presence: mode=node OR client_id contains node-host, and not disconnected
+            (mode == "node" || client_id == "node-host") && reason != "disconnect"
+        });
+        info!(node_online, "parsed node status from hello-ok snapshot");
+        let _ = client.tx.send(GatewayEvent::NodeStatus {
+            online: node_online,
+            node_id: "node".to_string(),
+        });
     }
 
     let _ = client.tx.send(GatewayEvent::Connected);
 
-    let mut presence_ticker = tokio::time::interval(Duration::from_secs(15));
+    let mut presence_ticker = tokio::time::interval(Duration::from_secs(30));
     let mut pending_presence: Option<String> = None;
 
     loop {
@@ -468,71 +490,43 @@ fn handle_frame(
 
 fn node_status_from_event(event_name: &str, payload: Option<&Value>) -> Option<GatewayEvent> {
     match event_name {
-        "node.online" => Some(GatewayEvent::NodeStatus {
-            online: true,
-            node_id: payload
-                .and_then(|v| v.get("nodeId"))
-                .and_then(Value::as_str)
-                .unwrap_or("node")
-                .to_string(),
-        }),
-        "node.offline" => Some(GatewayEvent::NodeStatus {
-            online: false,
-            node_id: payload
-                .and_then(|v| v.get("nodeId"))
-                .and_then(Value::as_str)
-                .unwrap_or("node")
-                .to_string(),
-        }),
-        "node.status" => {
-            let online = payload
-                .and_then(|v| v.get("online"))
-                .and_then(Value::as_bool)?;
-            let node_id = payload
-                .and_then(|v| v.get("nodeId"))
-                .and_then(Value::as_str)
-                .unwrap_or("node")
-                .to_string();
-            Some(GatewayEvent::NodeStatus { online, node_id })
+        // presence event contains array of all connected clients
+        "presence" => {
+            let items = payload?.as_array()?;
+            let node_online = items.iter().any(|p| is_node_presence(p));
+            Some(GatewayEvent::NodeStatus {
+                online: node_online,
+                node_id: "node".to_string(),
+            })
         }
+        // tick event — just keep alive, no status change
+        "tick" => None,
+        // shutdown — gateway going down
+        "shutdown" => Some(GatewayEvent::Disconnected("gateway shutdown".to_string())),
         _ => None,
     }
 }
 
+fn is_node_presence(p: &Value) -> bool {
+    let host = p.get("host").and_then(Value::as_str).unwrap_or_default();
+    let mode = p.get("mode").and_then(Value::as_str).unwrap_or_default();
+    let reason = p.get("reason").and_then(Value::as_str).unwrap_or_default();
+    // Node is online if: mode=node OR host=node-host, AND not disconnected
+    (mode == "node" || host == "node-host") && reason != "disconnect"
+}
+
 fn node_status_from_presence(payload: Option<&Value>) -> Option<GatewayEvent> {
     let payload = payload?;
-    let devices = payload
-        .get("devices")
-        .or_else(|| payload.get("clients"))
-        .or_else(|| payload.get("items"))?
-        .as_array()?;
+    // system-presence response: payload is the response body
+    // Try payload.presence or payload itself as array
+    let items = payload
+        .get("presence")
+        .and_then(Value::as_array)
+        .or_else(|| payload.as_array())?;
 
-    for device in devices {
-        let role = device
-            .get("role")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let mode = device
-            .get("mode")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-
-        if role == "node" || mode == "node" {
-            let node_id = device
-                .get("id")
-                .and_then(Value::as_str)
-                .or_else(|| device.get("nodeId").and_then(Value::as_str))
-                .unwrap_or("node")
-                .to_string();
-            return Some(GatewayEvent::NodeStatus {
-                online: true,
-                node_id,
-            });
-        }
-    }
-
+    let node_online = items.iter().any(|p| is_node_presence(p));
     Some(GatewayEvent::NodeStatus {
-        online: false,
+        online: node_online,
         node_id: "node".to_string(),
     })
 }
