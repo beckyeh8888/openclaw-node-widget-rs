@@ -231,20 +231,73 @@ cargo build --release
 
 ## FAQ / 常見問題
 
-**Q: Do I need OpenClaw installed on the same machine?**  
-A: No! The widget connects to your Gateway remotely via WebSocket. Your OpenClaw can be on any machine.
+### Architecture / 架構
 
-**Q: 我需要在同一台電腦裝 OpenClaw 嗎？**  
-A: 不用！Widget 透過 WebSocket 遠端連接 Gateway。你的 OpenClaw 可以在任何機器上。
+**Q: Do I need OpenClaw on every computer?**  
+A: **No!** Install OpenClaw once on your home server. Every other machine just needs Node + Widget. Node is lightweight (~50MB) and connects back to your central Gateway.
+
+**Q: 每台電腦都要裝 OpenClaw 嗎？**  
+A: **不用！** OpenClaw 只裝一次在家裡的伺服器上。其他機器只要裝 Node + Widget。Node 很輕量（~50MB），會自動連回你的中央 Gateway。
+
+**Q: What can my AI agent do on remote machines?**  
+A: Anything Node allows — run shell commands, read/write files, manage processes, check system status. Your agent orchestrates everything from the Gateway. I literally built this widget by having my AI agent remotely compile and launch it on my Windows PC — from my Mac mini.
+
+**Q: AI agent 能在遠端機器上做什麼？**  
+A: Node 允許的一切 — 執行指令、讀寫檔案、管理程序、查系統狀態。你的 agent 從 Gateway 統一協調。這個 widget 本身就是我的 AI agent 遠端在我的 Windows 電腦上編譯和啟動的 — 從我的 Mac mini。
+
+**Q: What's the difference between Node and Widget?**  
+A: **Node** = the agent's hands on that machine (runs commands, accesses files). **Widget** = your eyes (shows status, lets you control). You need both on remote machines.
+
+**Q: Node 跟 Widget 差在哪？**  
+A: **Node** = agent 在那台機器上的手（執行指令、存取檔案）。**Widget** = 你的眼睛（顯示狀態、讓你控制）。遠端機器兩個都裝。
+
+### Networking / 網路
+
+**Q: Do I need to open ports or set up a VPN?**  
+A: Not if you use [Tailscale](https://tailscale.com) (free for personal use). Install on both machines, sign in, done. The widget auto-detects your Tailscale peers during setup.
+
+**Q: 需要開 port 或設 VPN 嗎？**  
+A: 用 [Tailscale](https://tailscale.com)（個人免費）就不用。兩台都裝、登入、搞定。Widget 設定時會自動偵測你的 Tailscale 節點。
+
+**Q: Can I monitor multiple Gateways?**  
+A: Yes! Add multiple `[[connections]]` in config or use the Settings GUI. Each connection shows its own status in the tray menu.
+
+**Q: 可以同時監控多個 Gateway 嗎？**  
+A: 可以！在設定裡加多組 `[[connections]]` 或用設定介面。每個連線在系統列選單獨立顯示狀態。
+
+### Security / 安全性
 
 **Q: Is it safe? My token is in a config file.**  
-A: The token is only stored locally. Logs automatically mask tokens. Copy Diagnostics masks tokens too.
+A: The token is only stored locally on your machine. Logs automatically mask tokens. Copy Diagnostics masks them too. All communication goes through Tailscale (encrypted WireGuard tunnel) or your local network.
 
 **Q: 安全嗎？Token 存在設定檔裡。**  
-A: Token 只存在本地。日誌自動遮罩 token。複製診斷也會遮罩。
+A: Token 只存在你的本機。日誌自動遮罩 token。複製診斷也會遮罩。所有通訊走 Tailscale（加密 WireGuard 通道）或你的區網。
 
-**Q: What happens if the widget crashes?**  
-A: It has crash protection with loop detection. If the node crashes, the widget auto-restarts it (with configurable limits).
+**Q: Can someone hijack my Node?**  
+A: Node requires device pairing — your Gateway admin must explicitly approve each device. Unapproved devices can't connect.
+
+**Q: 有人能劫持我的 Node 嗎？**  
+A: Node 需要設備配對 — Gateway 管理員必須手動核准每個設備。未核准的設備連不上。
+
+### Troubleshooting / 疑難排解
+
+**Q: Widget shows red but my node is running?**  
+A: Check your Gateway URL and token in Settings. Right-click → Copy Diagnostics to see connection details. Common fix: make sure Tailscale is connected on both machines.
+
+**Q: Widget 顯示紅色但 Node 明明在跑？**  
+A: 檢查設定裡的 Gateway URL 和 token。右鍵 → 複製診斷查看連線細節。常見修法：確認兩台機器的 Tailscale 都有連上。
+
+**Q: What happens if the widget or node crashes?**  
+A: The widget has crash protection with loop detection. If the node crashes, the widget auto-restarts it (configurable). If the widget itself crashes, it restarts cleanly on next launch.
+
+**Q: Widget 或 Node 當機怎麼辦？**  
+A: Widget 有當機保護 + 迴圈偵測。Node 當了 widget 會自動重啟（可設定）。Widget 自己當了，下次啟動會乾淨恢復。
+
+**Q: Windows shows a SmartScreen warning?**  
+A: The binary isn't code-signed yet. Click "More info" → "Run anyway". It's open source — you can audit every line of code.
+
+**Q: Windows 跳出 SmartScreen 警告？**  
+A: 二進位檔尚未數位簽章。點「更多資訊」→「仍要執行」。完全開源 — 你可以審查每一行程式碼。
 
 ---
 
