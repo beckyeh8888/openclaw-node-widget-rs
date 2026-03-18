@@ -104,10 +104,37 @@ fn macos_set_autostart(enabled: bool) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let exe = current_exe_string()?;
-        let escaped = xml_escape(&exe);
-        let content = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
+        // If running from a .app bundle, use `open -a` to launch the .app
+        // so macOS treats it as a proper application launch.
+        // Otherwise, use the bare binary path.
+        let content = if let Some(app_path) = detect_app_bundle() {
+            let escaped = xml_escape(&app_path);
+            tracing::info!("autostart: using .app bundle path: {app_path}");
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.openclaw.node-widget</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/open</string>
+        <string>-a</string>
+        <string>{escaped}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+"#
+            )
+        } else {
+            let exe = current_exe_string()?;
+            let escaped = xml_escape(&exe);
+            tracing::info!("autostart: using bare binary path (not in .app bundle)");
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -122,13 +149,31 @@ fn macos_set_autostart(enabled: bool) -> Result<()> {
 </dict>
 </plist>
 "#
-        );
+            )
+        };
         fs::write(path, content)?;
     } else if path.exists() {
         fs::remove_file(path)?;
     }
 
     Ok(())
+}
+
+/// Detect if the current exe is running from inside a .app bundle.
+/// Returns the path to the .app directory if so.
+#[cfg(target_os = "macos")]
+pub fn detect_app_bundle() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let exe_str = exe.to_string_lossy();
+    // Look for the pattern: /path/to/Something.app/Contents/MacOS/binary
+    if let Some(idx) = exe_str.find(".app/Contents/MacOS") {
+        let app_path = &exe_str[..idx + 4]; // include ".app"
+        tracing::debug!("detected .app bundle: {app_path}");
+        Some(app_path.to_string())
+    } else {
+        tracing::debug!("not running from .app bundle");
+        None
+    }
 }
 
 #[cfg(target_os = "linux")]
