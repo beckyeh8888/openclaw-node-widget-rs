@@ -95,6 +95,13 @@ async fn run() -> error::Result<i32> {
                 }
             }
             init_tracing(&config);
+            let warnings = config.validate();
+            for w in &warnings {
+                tracing::warn!("config validation: {w}");
+            }
+            if let Some(first) = warnings.first() {
+                tray::send_notification_public(&format!("Config warning: {first}"));
+            }
             run_with_tray(config).await?;
             Ok(0)
         }

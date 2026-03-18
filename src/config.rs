@@ -153,6 +153,37 @@ impl Default for LogConfig {
 }
 
 impl Config {
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+
+        if let Some(url) = &self.gateway.url {
+            if !url.is_empty() && !url.starts_with("ws://") && !url.starts_with("wss://") {
+                errors.push(format!("Gateway URL must start with ws:// or wss://, got: {url}"));
+            }
+        }
+
+        if let Some(token) = &self.gateway.token {
+            if token.trim().is_empty() {
+                errors.push("Gateway token is empty".to_string());
+            }
+        }
+
+        if !self.node.command.is_empty() {
+            let cmd = self.node.command.split_whitespace().next().unwrap_or("");
+            if !cmd.is_empty() && !cmd.contains('/') && !cmd.contains('\\') {
+                // Only check if it's a path, not a bare command name (which relies on PATH)
+            } else if !cmd.is_empty() && !std::path::Path::new(cmd).exists() {
+                errors.push(format!("Node command not found: {cmd}"));
+            }
+        }
+
+        if !self.node.working_dir.is_empty() && !std::path::Path::new(&self.node.working_dir).exists() {
+            errors.push(format!("Node working directory does not exist: {}", self.node.working_dir));
+        }
+
+        errors
+    }
+
     pub fn load() -> Result<Self> {
         let path = config_path()?;
         if !path.exists() {
