@@ -250,9 +250,9 @@ fn status_from_gateway(
         format!("Gateway disconnected: {error}")
     } else {
         match status {
-            NodeStatus::Online => "Gateway connected: node online".to_string(),
-            NodeStatus::Offline => "Gateway connected: node offline".to_string(),
-            NodeStatus::Unknown => "Gateway connected: waiting for node status".to_string(),
+            NodeStatus::Online => "Node Online".to_string(),
+            NodeStatus::Offline => "Node Offline (Gateway connected)".to_string(),
+            NodeStatus::Unknown => "Checking node status...".to_string(),
         }
     };
 

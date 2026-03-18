@@ -150,9 +150,14 @@ impl TrayState {
             (detail.to_string(), detail.to_string())
         };
 
+        let icon = match status {
+            NodeStatus::Online => "✅",
+            NodeStatus::Offline => "🔴",
+            NodeStatus::Unknown => "⏳",
+        };
         let label = match pid {
-            Some(pid) => format!("Status: {status_text} (PID {pid})"),
-            None => format!("Status: {status_text}"),
+            Some(pid) => format!("{icon} {status_text} (PID {pid})"),
+            None => format!("{icon} {status_text}"),
         };
 
         self.status_item.set_text(&label);
