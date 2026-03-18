@@ -392,7 +392,10 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml);
     );
 
     match Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .spawn()
     {
