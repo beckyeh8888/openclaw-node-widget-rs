@@ -96,7 +96,7 @@ impl TrayState {
         let settings_item = MenuItem::new(t("settings"), true, None);
         let setup_wizard_item = MenuItem::new(t("setup_wizard"), true, None);
         let check_updates_item = MenuItem::new(t("check_for_updates"), true, None);
-        let download_update_item = MenuItem::new("", false, None);
+        let download_update_item = MenuItem::new(t("no_updates"), false, None);
         let copy_diagnostics_item = MenuItem::new(t("copy_diagnostics"), true, None);
         let uninstall_item = MenuItem::new(t("uninstall"), true, None);
         let exit_item = MenuItem::new(t("exit"), true, None);
@@ -119,6 +119,7 @@ impl TrayState {
         a(&settings_item)?;
         a(&setup_wizard_item)?;
         a(&check_updates_item)?;
+        a(&download_update_item)?;
         a(&copy_diagnostics_item)?;
         a(&sep())?;
         a(&uninstall_item)?;
