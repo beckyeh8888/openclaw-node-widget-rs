@@ -39,9 +39,14 @@ pub struct GatewayClient {
 
 #[derive(Debug, Clone)]
 pub enum GatewayEvent {
-    Connected,
+    Connected {
+        gateway_version: Option<String>,
+    },
     Disconnected(String),
-    NodeStatus { online: bool },
+    NodeStatus {
+        online: bool,
+        node_name: Option<String>,
+    },
     Error(String),
 }
 
@@ -403,10 +408,19 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
         }
     };
 
-    // Node status is determined by node.list API polling (not snapshot presence)
-    // The first node.list request fires immediately from the ticker below
-    info!("gateway connected, node status will be polled via node.list");
-    let _ = client.tx.send(GatewayEvent::Connected);
+    // Extract gateway version from hello-ok response
+    let gateway_version = _hello_ok_frame
+        .get("payload")
+        .and_then(|p| {
+            p.get("version")
+                .or_else(|| p.get("gatewayVersion"))
+                .or_else(|| p.get("serverVersion"))
+        })
+        .and_then(Value::as_str)
+        .map(String::from);
+
+    info!(?gateway_version, "gateway connected, node status will be polled via node.list");
+    let _ = client.tx.send(GatewayEvent::Connected { gateway_version });
 
     let mut presence_ticker = tokio::time::interval(Duration::from_secs(30));
     let mut pending_presence: Option<String> = None;
@@ -528,8 +542,21 @@ fn node_status_from_node_list(payload: Option<&Value>) -> Option<GatewayEvent> {
         n.get("connected").and_then(Value::as_bool).unwrap_or(false)
     });
 
+    // Extract displayName from the first connected node, or first node
+    let node_name = items
+        .iter()
+        .find(|n| {
+            n.get("connected")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .or_else(|| items.first())
+        .and_then(|n| n.get("displayName").and_then(Value::as_str))
+        .map(String::from);
+
     Some(GatewayEvent::NodeStatus {
         online: node_online,
+        node_name,
     })
 }
 

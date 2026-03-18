@@ -41,6 +41,7 @@ pub struct WidgetConfig {
     pub max_restart_attempts: u32,
     pub crash_loop_secs: u64,
     pub notifications: bool,
+    pub notification_sound: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +113,7 @@ impl Default for WidgetConfig {
             max_restart_attempts: 5,
             crash_loop_secs: 300,
             notifications: true,
+            notification_sound: true,
         }
     }
 }

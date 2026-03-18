@@ -5,11 +5,15 @@ mod autostart;
 mod config;
 mod error;
 mod gateway;
+mod i18n;
 mod lock;
 mod monitor;
 mod process;
+mod settings;
 mod setup;
 mod tray;
+mod uninstall;
+mod update;
 mod wizard;
 
 use clap::{Parser, Subcommand};
@@ -141,6 +145,9 @@ fn init_tracing(config: &Config) {
 }
 
 async fn run_with_tray(mut config: Config) -> error::Result<()> {
+    i18n::init();
+    update::spawn_periodic_check();
+
     let (tray_cmd_tx, mut tray_cmd_rx) = mpsc::unbounded_channel();
     let (monitor_cmd_tx, monitor_cmd_rx) = mpsc::unbounded_channel();
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
@@ -232,16 +239,66 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                         tray.set_auto_start(!enabled);
                     }
                 },
+                TrayCommand::OpenGatewayUi => {
+                    if let Some(url) = &config.gateway.url {
+                        let http_url = url.replace("ws://", "http://").replace("wss://", "https://");
+                        info!("opening gateway UI: {http_url}");
+                        let _ = open::that(&http_url);
+                    }
+                }
+                TrayCommand::ViewLogs => {
+                    let logs_dir = dirs::home_dir()
+                        .map(|h| h.join(".openclaw").join("logs"))
+                        .unwrap_or_default();
+                    info!("opening logs dir: {}", logs_dir.display());
+                    let _ = open::that(&logs_dir);
+                }
                 TrayCommand::Settings => {
-                    if let Ok(path) = config::config_path() {
-                        info!("opening config: {}", path.display());
-                        let _ = open::that(&path);
+                    if let Some(saved_config) = settings::run_settings_window(&config)? {
+                        config = saved_config;
+                        tray.set_auto_restart(config.widget.auto_restart);
+                        tray.set_auto_start(autostart::effective_autostart(&config));
                     }
                 }
                 TrayCommand::SetupWizard => {
                     if let Some(saved_config) = wizard::run_setup_wizard(&config)? {
                         config = saved_config;
                         tray.set_auto_start(autostart::effective_autostart(&config));
+                    }
+                }
+                TrayCommand::CheckForUpdates => {
+                    tokio::spawn(async {
+                        match update::check_for_updates().await {
+                            Some((version, url)) => {
+                                let body = format!("{} {version}\n{url}", i18n::t("notif_update_available"));
+                                let _ = notify_rust::Notification::new()
+                                    .appname(i18n::t("app_name"))
+                                    .summary(i18n::t("app_name"))
+                                    .body(&body)
+                                    .show();
+                            }
+                            None => {
+                                let _ = notify_rust::Notification::new()
+                                    .appname(i18n::t("app_name"))
+                                    .summary(i18n::t("app_name"))
+                                    .body(i18n::t("notif_up_to_date"))
+                                    .show();
+                            }
+                        }
+                    });
+                }
+                TrayCommand::Uninstall => {
+                    match uninstall::confirm_uninstall() {
+                        Ok(true) => {
+                            let _ = uninstall::perform_uninstall();
+                            let _ = notify_rust::Notification::new()
+                                .appname(i18n::t("app_name"))
+                                .summary(i18n::t("app_name"))
+                                .body(i18n::t("notif_uninstalled"))
+                                .show();
+                            return Ok(());
+                        }
+                        _ => {}
                     }
                 }
                 TrayCommand::Exit => return Ok(()),

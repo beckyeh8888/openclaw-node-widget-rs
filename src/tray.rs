@@ -9,6 +9,7 @@ use tray_icon::{
 use crate::{
     error::{AppError, Result},
     gateway::GatewayEvent,
+    i18n::t,
     monitor::{NodeStatus, StopReason},
 };
 
@@ -19,21 +20,30 @@ pub enum TrayCommand {
     StopNode,
     ToggleAutoRestart(bool),
     ToggleAutoStart(bool),
+    OpenGatewayUi,
+    ViewLogs,
     Settings,
     SetupWizard,
+    CheckForUpdates,
+    Uninstall,
     Exit,
 }
 
 pub struct TrayState {
     tray: TrayIcon,
     status_item: MenuItem,
+    conn_detail_item: MenuItem,
     auto_restart_item: CheckMenuItem,
     auto_start_item: CheckMenuItem,
     refresh_id: MenuId,
     restart_id: MenuId,
     stop_id: MenuId,
+    open_gateway_id: MenuId,
+    view_logs_id: MenuId,
     settings_id: MenuId,
     setup_wizard_id: MenuId,
+    check_updates_id: MenuId,
+    uninstall_id: MenuId,
     exit_id: MenuId,
     auto_restart_id: MenuId,
     auto_start_id: MenuId,
@@ -43,6 +53,9 @@ pub struct TrayState {
     last_crash_loop: bool,
     gateway_status: String,
     last_node_tooltip: String,
+    gateway_version: Option<String>,
+    node_name: Option<String>,
+    connected_at: Option<std::time::Instant>,
 }
 
 impl TrayState {
@@ -53,41 +66,45 @@ impl TrayState {
         notifications_enabled: bool,
     ) -> Result<Self> {
         let menu = Menu::new();
+        let a = |item: &dyn tray_icon::menu::IsMenuItem| -> Result<()> {
+            menu.append(item).map_err(|e| AppError::Tray(e.to_string()))
+        };
+        let sep = || PredefinedMenuItem::separator();
 
-        let status_item = MenuItem::new("Status: Unknown", false, None);
-        let refresh_item = MenuItem::new("Refresh", true, None);
-        let restart_item = MenuItem::new("Restart Node", true, None);
-        let stop_item = MenuItem::new("Stop Node", true, None);
-        let auto_restart_item = CheckMenuItem::new("Auto-restart", true, auto_restart, None);
-        let auto_start_item = CheckMenuItem::new("Auto-start", true, auto_start, None);
-        let settings_item = MenuItem::new("Settings", true, None);
-        let setup_wizard_item = MenuItem::new("Setup Wizard...", true, None);
-        let exit_item = MenuItem::new("Exit", true, None);
+        let status_item = MenuItem::new(format!("Node: {}", t("status_unknown")), false, None);
+        let conn_detail_item = MenuItem::new(format!("{}{}", t("connection_details"), t("na")), false, None);
+        let refresh_item = MenuItem::new(t("refresh"), true, None);
+        let restart_item = MenuItem::new(t("restart_node"), true, None);
+        let stop_item = MenuItem::new(t("stop_node"), true, None);
+        let open_gateway_item = MenuItem::new(t("open_gateway_ui"), true, None);
+        let view_logs_item = MenuItem::new(t("view_logs"), true, None);
+        let auto_restart_item = CheckMenuItem::new(t("auto_restart"), true, auto_restart, None);
+        let auto_start_item = CheckMenuItem::new(t("auto_start"), true, auto_start, None);
+        let settings_item = MenuItem::new(t("settings"), true, None);
+        let setup_wizard_item = MenuItem::new(t("setup_wizard"), true, None);
+        let check_updates_item = MenuItem::new(t("check_for_updates"), true, None);
+        let uninstall_item = MenuItem::new(t("uninstall"), true, None);
+        let exit_item = MenuItem::new(t("exit"), true, None);
 
-        menu.append(&status_item)
-            .map_err(|e| AppError::Tray(e.to_string()))?;
-        menu.append(&PredefinedMenuItem::separator())
-            .map_err(|e| AppError::Tray(e.to_string()))?;
-        menu.append(&refresh_item)
-            .map_err(|e| AppError::Tray(e.to_string()))?;
-        menu.append(&restart_item)
-            .map_err(|e| AppError::Tray(e.to_string()))?;
-        menu.append(&stop_item)
-            .map_err(|e| AppError::Tray(e.to_string()))?;
-        menu.append(&PredefinedMenuItem::separator())
-            .map_err(|e| AppError::Tray(e.to_string()))?;
-        menu.append(&auto_restart_item)
-            .map_err(|e| AppError::Tray(e.to_string()))?;
-        menu.append(&auto_start_item)
-            .map_err(|e| AppError::Tray(e.to_string()))?;
-        menu.append(&PredefinedMenuItem::separator())
-            .map_err(|e| AppError::Tray(e.to_string()))?;
-        menu.append(&settings_item)
-            .map_err(|e| AppError::Tray(e.to_string()))?;
-        menu.append(&setup_wizard_item)
-            .map_err(|e| AppError::Tray(e.to_string()))?;
-        menu.append(&exit_item)
-            .map_err(|e| AppError::Tray(e.to_string()))?;
+        a(&status_item)?;
+        a(&conn_detail_item)?;
+        a(&sep())?;
+        a(&refresh_item)?;
+        a(&restart_item)?;
+        a(&stop_item)?;
+        a(&sep())?;
+        a(&open_gateway_item)?;
+        a(&view_logs_item)?;
+        a(&sep())?;
+        a(&auto_restart_item)?;
+        a(&auto_start_item)?;
+        a(&sep())?;
+        a(&settings_item)?;
+        a(&setup_wizard_item)?;
+        a(&check_updates_item)?;
+        a(&sep())?;
+        a(&uninstall_item)?;
+        a(&exit_item)?;
 
         let icon = icon_for_status(NodeStatus::Unknown)?;
         let tray = TrayIconBuilder::new()
@@ -100,8 +117,12 @@ impl TrayState {
         let refresh_id = refresh_item.id().clone();
         let restart_id = restart_item.id().clone();
         let stop_id = stop_item.id().clone();
+        let open_gateway_id = open_gateway_item.id().clone();
+        let view_logs_id = view_logs_item.id().clone();
         let settings_id = settings_item.id().clone();
         let setup_wizard_id = setup_wizard_item.id().clone();
+        let check_updates_id = check_updates_item.id().clone();
+        let uninstall_id = uninstall_item.id().clone();
         let exit_id = exit_item.id().clone();
         let auto_restart_id = auto_restart_item.id().clone();
         let auto_start_id = auto_start_item.id().clone();
@@ -109,13 +130,18 @@ impl TrayState {
         Ok(Self {
             tray,
             status_item,
+            conn_detail_item,
             auto_restart_item,
             auto_start_item,
             refresh_id,
             restart_id,
             stop_id,
+            open_gateway_id,
+            view_logs_id,
             settings_id,
             setup_wizard_id,
+            check_updates_id,
+            uninstall_id,
             exit_id,
             auto_restart_id,
             auto_start_id,
@@ -123,8 +149,11 @@ impl TrayState {
             notifications_enabled,
             last_status: None,
             last_crash_loop: false,
-            gateway_status: "Not configured".to_string(),
-            last_node_tooltip: "Unknown".to_string(),
+            gateway_status: t("gateway_not_configured").to_string(),
+            last_node_tooltip: t("status_unknown").to_string(),
+            gateway_version: None,
+            node_name: None,
+            connected_at: None,
         })
     }
 
@@ -177,15 +206,52 @@ impl TrayState {
     }
 
     pub fn handle_gateway_event(&mut self, event: &GatewayEvent) -> Result<()> {
-        self.gateway_status = match event {
-            GatewayEvent::Connected => "Connected".to_string(),
-            GatewayEvent::Disconnected(reason) => format!("Disconnected: {reason}"),
-            GatewayEvent::NodeStatus { online, .. } => {
-                if *online { "Connected" } else { "Connected (node offline)" }.to_string()
+        match event {
+            GatewayEvent::Connected { gateway_version } => {
+                self.gateway_status = t("gateway_connected").to_string();
+                self.gateway_version = gateway_version.clone();
+                self.connected_at = Some(std::time::Instant::now());
             }
-            GatewayEvent::Error(message) => format!("Error: {message}"),
+            GatewayEvent::Disconnected(reason) => {
+                self.gateway_status = format!("Disconnected: {reason}");
+                self.connected_at = None;
+            }
+            GatewayEvent::NodeStatus { online, node_name } => {
+                self.gateway_status = if *online {
+                    t("gateway_connected").to_string()
+                } else {
+                    t("gateway_node_offline").to_string()
+                };
+                if node_name.is_some() {
+                    self.node_name = node_name.clone();
+                }
+            }
+            GatewayEvent::Error(message) => {
+                self.gateway_status = format!("Error: {message}");
+                self.connected_at = None;
+            }
         };
+        self.update_conn_detail();
         self.refresh_tooltip()
+    }
+
+    fn update_conn_detail(&mut self) {
+        let gw = self.gateway_version.as_deref().unwrap_or(t("na"));
+        let node = self.node_name.as_deref().unwrap_or(t("na"));
+        let uptime = match self.connected_at {
+            Some(at) => {
+                let secs = at.elapsed().as_secs();
+                if secs < 60 {
+                    t("just_now").to_string()
+                } else if secs < 3600 {
+                    format!("{}{}",secs / 60, t("minutes_short"))
+                } else {
+                    format!("{}{} {}{}", secs / 3600, t("hours_short"), (secs % 3600) / 60, t("minutes_short"))
+                }
+            }
+            None => t("na").to_string(),
+        };
+        self.conn_detail_item.set_text(&format!("GW:{gw} | {node} | {uptime}"));
     }
 
     pub fn set_auto_restart(&mut self, enabled: bool) {
@@ -204,39 +270,36 @@ impl TrayState {
     }
 
     fn dispatch_menu_event(&self, id: MenuId) {
-        if id == self.refresh_id {
-            let _ = self.cmd_tx.send(TrayCommand::Refresh);
-            return;
-        }
-        if id == self.restart_id {
-            let _ = self.cmd_tx.send(TrayCommand::RestartNode);
-            return;
-        }
-        if id == self.stop_id {
-            let _ = self.cmd_tx.send(TrayCommand::StopNode);
-            return;
-        }
-        if id == self.settings_id {
-            let _ = self.cmd_tx.send(TrayCommand::Settings);
-            return;
-        }
-        if id == self.setup_wizard_id {
-            let _ = self.cmd_tx.send(TrayCommand::SetupWizard);
-            return;
-        }
-        if id == self.exit_id {
-            let _ = self.cmd_tx.send(TrayCommand::Exit);
-            return;
-        }
-        if id == self.auto_restart_id {
+        let cmd = if id == self.refresh_id {
+            TrayCommand::Refresh
+        } else if id == self.restart_id {
+            TrayCommand::RestartNode
+        } else if id == self.stop_id {
+            TrayCommand::StopNode
+        } else if id == self.open_gateway_id {
+            TrayCommand::OpenGatewayUi
+        } else if id == self.view_logs_id {
+            TrayCommand::ViewLogs
+        } else if id == self.settings_id {
+            TrayCommand::Settings
+        } else if id == self.setup_wizard_id {
+            TrayCommand::SetupWizard
+        } else if id == self.check_updates_id {
+            TrayCommand::CheckForUpdates
+        } else if id == self.uninstall_id {
+            TrayCommand::Uninstall
+        } else if id == self.exit_id {
+            TrayCommand::Exit
+        } else if id == self.auto_restart_id {
             let checked = !self.auto_restart_item.is_checked();
-            let _ = self.cmd_tx.send(TrayCommand::ToggleAutoRestart(checked));
-            return;
-        }
-        if id == self.auto_start_id {
+            TrayCommand::ToggleAutoRestart(checked)
+        } else if id == self.auto_start_id {
             let checked = !self.auto_start_item.is_checked();
-            let _ = self.cmd_tx.send(TrayCommand::ToggleAutoStart(checked));
-        }
+            TrayCommand::ToggleAutoStart(checked)
+        } else {
+            return;
+        };
+        let _ = self.cmd_tx.send(cmd);
     }
 
     fn notify_transitions(&self, status: NodeStatus, crash_loop: bool) {
