@@ -38,4 +38,3 @@ nix = { version = "0.29", features = ["signal"] }
 winapi = { version = "0.3", features = ["winbase"] }
 winreg = "0.55"
 windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging"] }
-winrt-notification = "0.5"

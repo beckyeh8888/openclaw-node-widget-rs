@@ -355,44 +355,13 @@ pub fn send_notification_public(body: &str) {
 }
 
 fn send_notification(body: &str) {
-    #[cfg(windows)]
-    {
-        send_notification_windows(body);
-        return;
-    }
-
-    #[cfg(not(windows))]
-    {
-        match Notification::new()
-            .appname("OpenClaw Node Widget")
-            .summary("OpenClaw Node Widget")
-            .body(body)
-            .show()
-        {
-            Ok(_) => tracing::debug!("notification sent: {body}"),
-            Err(e) => tracing::warn!("notification failed: {e}"),
-        }
-    }
-}
-
-#[cfg(windows)]
-fn send_notification_windows(body: &str) {
-    use winrt_notification::{Toast, Duration as ToastDuration};
-
-    match Toast::new(Toast::POWERSHELL_APP_ID)
-        .title("OpenClaw Node Widget")
-        .text1(body)
-        .duration(ToastDuration::Short)
+    match Notification::new()
+        .appname("OpenClaw Node Widget")
+        .summary("OpenClaw Node Widget")
+        .body(body)
         .show()
     {
-        Ok(_) => tracing::debug!("windows toast sent: {body}"),
-        Err(e) => {
-            tracing::warn!("windows toast failed: {e}, falling back to notify-rust");
-            let _ = Notification::new()
-                .appname("OpenClaw Node Widget")
-                .summary("OpenClaw Node Widget")
-                .body(body)
-                .show();
-        }
+        Ok(_) => tracing::debug!("notification sent: {body}"),
+        Err(e) => tracing::warn!("notification failed: {e}"),
     }
 }
