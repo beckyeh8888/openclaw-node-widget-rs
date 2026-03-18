@@ -470,6 +470,13 @@ fn handle_frame(
     match frame_type(frame) {
         Some("event") => {
             if let Some(event_name) = frame_name(frame) {
+                info!(event = event_name, "gateway event received");
+                if event_name == "presence" {
+                    // Log the raw presence payload for debugging
+                    if let Some(payload) = frame.get("payload") {
+                        info!(payload = %payload, "presence event payload");
+                    }
+                }
                 if let Some(event) = node_status_from_event(event_name, frame.get("payload")) {
                     let _ = tx.send(event);
                 }
@@ -479,6 +486,10 @@ fn handle_frame(
             let ok = frame.get("ok").and_then(Value::as_bool).unwrap_or(false);
             let id = frame.get("id").and_then(Value::as_str);
             if ok && id.is_some() && id == pending_presence {
+                info!("system-presence response received");
+                if let Some(payload) = frame.get("payload") {
+                    info!(payload = %payload, "system-presence payload");
+                }
                 if let Some(event) = node_status_from_presence(frame.get("payload")) {
                     let _ = tx.send(event);
                 }
@@ -490,9 +501,14 @@ fn handle_frame(
 
 fn node_status_from_event(event_name: &str, payload: Option<&Value>) -> Option<GatewayEvent> {
     match event_name {
-        // presence event contains array of all connected clients
+        // presence event: payload could be array directly OR { presence: [...] } OR { clients: [...] }
         "presence" => {
-            let items = payload?.as_array()?;
+            let payload = payload?;
+            let items = payload
+                .as_array()
+                .or_else(|| payload.get("presence").and_then(Value::as_array))
+                .or_else(|| payload.get("clients").and_then(Value::as_array))
+                .or_else(|| payload.get("items").and_then(Value::as_array))?;
             let node_online = items.iter().any(|p| is_node_presence(p));
             Some(GatewayEvent::NodeStatus {
                 online: node_online,
