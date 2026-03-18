@@ -414,6 +414,7 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
         tokio::select! {
             _ = presence_ticker.tick() => {
                 let req_id = Uuid::new_v4().to_string();
+                info!(req_id = %req_id, "sending system-presence request");
                 let frame = json!({
                     "type": "req",
                     "id": req_id,
@@ -485,13 +486,18 @@ fn handle_frame(
         Some("res") => {
             let ok = frame.get("ok").and_then(Value::as_bool).unwrap_or(false);
             let id = frame.get("id").and_then(Value::as_str);
-            if ok && id.is_some() && id == pending_presence {
-                info!("system-presence response received");
-                if let Some(payload) = frame.get("payload") {
-                    info!(payload = %payload, "system-presence payload");
-                }
-                if let Some(event) = node_status_from_presence(frame.get("payload")) {
-                    let _ = tx.send(event);
+            info!(ok, ?id, ?pending_presence, "response frame received");
+            if ok {
+                if id.is_some() && id == pending_presence {
+                    info!("system-presence response matched");
+                    if let Some(payload) = frame.get("payload") {
+                        info!(payload = %payload, "system-presence payload");
+                    }
+                    if let Some(event) = node_status_from_presence(frame.get("payload")) {
+                        let _ = tx.send(event);
+                    }
+                } else {
+                    info!("response id mismatch, ignoring");
                 }
             }
         }
