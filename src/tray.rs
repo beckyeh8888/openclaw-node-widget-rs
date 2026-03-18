@@ -13,6 +13,7 @@ use crate::{
     gateway::{GatewayEvent, GatewayStats},
     i18n::t,
     monitor::{NodeStatus, StopReason},
+    tailscale,
 };
 
 #[derive(Debug, Clone)]
@@ -85,6 +86,10 @@ pub struct TrayState {
     /// Ordered connection names (for deterministic display)
     connection_order: Vec<String>,
     multi_connection: bool,
+    tailscale_item: MenuItem,
+    tailscale_status: tailscale::TailscaleStatus,
+    latency_item: MenuItem,
+    latency_ms: Option<u64>,
 }
 
 impl TrayState {
@@ -155,6 +160,14 @@ impl TrayState {
         let stats_sessions_item = MenuItem::new(format!("{}{}", t("stats_sessions"), "0"), false, None);
         let stats_errors_item = MenuItem::new(format!("{}{}", t("stats_errors_24h"), "0"), false, None);
         let stats_activity_item = MenuItem::new(format!("{}{}", t("stats_last_activity"), t("na")), false, None);
+        let initial_ts = tailscale::check_status();
+        let ts_label = match initial_ts {
+            tailscale::TailscaleStatus::Connected => t("tailscale_connected"),
+            tailscale::TailscaleStatus::Disconnected => t("tailscale_disconnected"),
+            tailscale::TailscaleStatus::NotInstalled => t("tailscale_not_installed"),
+        };
+        let tailscale_item = MenuItem::new(ts_label, false, None);
+        let latency_item = MenuItem::new(t("latency_na"), false, None);
         let refresh_item = MenuItem::new(t("refresh"), true, None);
         let restart_item = MenuItem::new(t("restart_node"), true, None);
         let stop_item = MenuItem::new(t("stop_node"), true, None);
@@ -177,6 +190,8 @@ impl TrayState {
         a(&stats_sessions_item)?;
         a(&stats_errors_item)?;
         a(&stats_activity_item)?;
+        a(&tailscale_item)?;
+        a(&latency_item)?;
         a(&sep())?;
         a(&refresh_item)?;
         a(&restart_item)?;
@@ -256,6 +271,10 @@ impl TrayState {
             connections,
             connection_order,
             multi_connection,
+            tailscale_item,
+            tailscale_status: initial_ts,
+            latency_item,
+            latency_ms: None,
         })
     }
 
@@ -356,6 +375,13 @@ impl TrayState {
                 } else {
                     t("gateway_node_offline").to_string()
                 };
+            }
+            GatewayEvent::Latency { ms, .. } => {
+                self.update_latency(Some(*ms));
+                if *ms > 500 && self.notifications_enabled {
+                    send_notification(t("latency_warning"));
+                }
+                return Ok(());
             }
             GatewayEvent::Error { connection_name, message } => {
                 if let Some(cs) = self.connections.get_mut(connection_name) {
@@ -482,6 +508,17 @@ impl TrayState {
             })
             .unwrap_or_else(|| "N/A".to_string());
 
+        let ts_status = match self.tailscale_status {
+            tailscale::TailscaleStatus::Connected => "Connected",
+            tailscale::TailscaleStatus::Disconnected => "Disconnected",
+            tailscale::TailscaleStatus::NotInstalled => "Not installed",
+        };
+
+        let latency_str = match self.latency_ms {
+            Some(ms) => format!("{ms}ms"),
+            None => "N/A".to_string(),
+        };
+
         format!(
             "OpenClaw Node Widget Diagnostics\n\
              ─────────────────────────────────\n\
@@ -489,9 +526,41 @@ impl TrayState {
              OS:             {os}\n\
              Node Status:    {status}\n\
              Connections:    {count}{conn_lines}\n\
-             Uptime:         {uptime}",
+             Uptime:         {uptime}\n\
+             Tailscale:      {ts_status}\n\
+             Latency:        {latency_str}",
             count = connections.len(),
         )
+    }
+
+    pub fn update_tailscale_status(&mut self, gateway_urls: &[String]) {
+        let new_status = tailscale::check_status();
+        let label = match new_status {
+            tailscale::TailscaleStatus::Connected => t("tailscale_connected"),
+            tailscale::TailscaleStatus::Disconnected => t("tailscale_disconnected"),
+            tailscale::TailscaleStatus::NotInstalled => t("tailscale_not_installed"),
+        };
+        self.tailscale_item.set_text(label);
+
+        // Warn if Tailscale went down and a gateway uses a Tailscale IP
+        if self.tailscale_status == tailscale::TailscaleStatus::Connected
+            && new_status == tailscale::TailscaleStatus::Disconnected
+        {
+            let uses_ts_ip = gateway_urls.iter().any(|url| tailscale::is_tailscale_ip(url));
+            if uses_ts_ip && self.notifications_enabled {
+                send_notification(t("tailscale_warning"));
+            }
+        }
+        self.tailscale_status = new_status;
+    }
+
+    pub fn update_latency(&mut self, latency_ms: Option<u64>) {
+        self.latency_ms = latency_ms;
+        let label = match latency_ms {
+            Some(ms) => format!("{}{}ms", t("latency_label"), ms),
+            None => t("latency_na").to_string(),
+        };
+        self.latency_item.set_text(&label);
     }
 
     pub fn show_download_update(&mut self, tag: &str) {
@@ -583,10 +652,21 @@ impl TrayState {
                 .collect();
             format!("OpenClaw Node Widget\n{}", parts.join("\n"))
         } else {
-            format!(
-                "OpenClaw Node: {}\nGateway: {}",
-                self.last_node_tooltip, self.gateway_status
-            )
+            let latency = match self.latency_ms {
+                Some(ms) => format!("{}{}ms", t("latency_label"), ms),
+                None => String::new(),
+            };
+            if latency.is_empty() {
+                format!(
+                    "OpenClaw Node: {}\nGateway: {}",
+                    self.last_node_tooltip, self.gateway_status
+                )
+            } else {
+                format!(
+                    "OpenClaw Node: {}\nGateway: {}\n{}",
+                    self.last_node_tooltip, self.gateway_status, latency
+                )
+            }
         };
         self.tray
             .set_tooltip(Some(tooltip))

@@ -185,6 +185,9 @@ pub fn spawn_monitor(
                             gateway_error = Some(message.clone());
                             let _ = status_tx.send(status_from_gateway(gateway_online, gateway_error.as_deref(), gateway_connected, gateway_status, crash_loop, stop_reason));
                         }
+                        GatewayEvent::Latency { .. } => {
+                            // Latency events are handled by the tray, not the monitor
+                        }
                     }
                 }
                 Some(cmd) = command_rx.recv() => {
