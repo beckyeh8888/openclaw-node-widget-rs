@@ -299,6 +299,21 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                         }
                     });
                 }
+                TrayCommand::CopyDiagnostics => {
+                    let diag = tray.collect_diagnostics(
+                        config.gateway.url.as_deref(),
+                        config.gateway.token.as_deref(),
+                    );
+                    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(diag)) {
+                        Ok(()) => {
+                            tray::send_notification_public(i18n::t("diagnostics_copied"));
+                        }
+                        Err(e) => {
+                            error!("clipboard copy failed: {e}");
+                            tray::send_notification_public(&format!("Copy failed: {e}"));
+                        }
+                    }
+                }
                 TrayCommand::ShowDownloadButton(tag) => {
                     tray.show_download_update(&tag);
                 }

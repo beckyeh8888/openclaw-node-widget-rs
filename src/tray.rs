@@ -27,6 +27,7 @@ pub enum TrayCommand {
     CheckForUpdates,
     DownloadUpdate(String),
     ShowDownloadButton(String),
+    CopyDiagnostics,
     Uninstall,
     Exit,
 }
@@ -50,6 +51,7 @@ pub struct TrayState {
     download_update_item: MenuItem,
     download_update_id: MenuId,
     pending_update_tag: Option<String>,
+    copy_diagnostics_id: MenuId,
     uninstall_id: MenuId,
     exit_id: MenuId,
     auto_restart_id: MenuId,
@@ -95,6 +97,7 @@ impl TrayState {
         let setup_wizard_item = MenuItem::new(t("setup_wizard"), true, None);
         let check_updates_item = MenuItem::new(t("check_for_updates"), true, None);
         let download_update_item = MenuItem::new("", false, None);
+        let copy_diagnostics_item = MenuItem::new(t("copy_diagnostics"), true, None);
         let uninstall_item = MenuItem::new(t("uninstall"), true, None);
         let exit_item = MenuItem::new(t("exit"), true, None);
 
@@ -117,6 +120,7 @@ impl TrayState {
         a(&setup_wizard_item)?;
         a(&check_updates_item)?;
         a(&download_update_item)?;
+        a(&copy_diagnostics_item)?;
         a(&sep())?;
         a(&uninstall_item)?;
         a(&exit_item)?;
@@ -138,6 +142,7 @@ impl TrayState {
         let setup_wizard_id = setup_wizard_item.id().clone();
         let check_updates_id = check_updates_item.id().clone();
         let download_update_id = download_update_item.id().clone();
+        let copy_diagnostics_id = copy_diagnostics_item.id().clone();
         let uninstall_id = uninstall_item.id().clone();
         let exit_id = exit_item.id().clone();
         let auto_restart_id = auto_restart_item.id().clone();
@@ -162,6 +167,7 @@ impl TrayState {
             download_update_item,
             download_update_id,
             pending_update_tag: None,
+            copy_diagnostics_id,
             uninstall_id,
             exit_id,
             auto_restart_id,
@@ -308,6 +314,48 @@ impl TrayState {
             .set_text(&format!("{}{}", t("last_connected_label"), connected_text));
     }
 
+    pub fn collect_diagnostics(&self, gateway_url: Option<&str>, gateway_token: Option<&str>) -> String {
+        let version = env!("CARGO_PKG_VERSION");
+        let os = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
+        let status = self
+            .last_status
+            .map(|s| format!("{:?}", s))
+            .unwrap_or_else(|| "Unknown".to_string());
+        let masked_url = gateway_url.unwrap_or("N/A");
+        let masked_token = gateway_token
+            .map(|t| mask_token(t))
+            .unwrap_or_else(|| "N/A".to_string());
+        let last_error = self.last_error.as_deref().unwrap_or("None");
+        let last_connected = self
+            .last_connected
+            .map(|dt| format_last_connected(dt))
+            .unwrap_or_else(|| "N/A".to_string());
+        let uptime = match self.connected_at {
+            Some(at) => {
+                let secs = at.elapsed().as_secs();
+                format!("{}h {}m {}s", secs / 3600, (secs % 3600) / 60, secs % 60)
+            }
+            None => "N/A".to_string(),
+        };
+        let node_name = self.node_name.as_deref().unwrap_or("N/A");
+        let gw_version = self.gateway_version.as_deref().unwrap_or("N/A");
+
+        format!(
+            "OpenClaw Node Widget Diagnostics\n\
+             ─────────────────────────────────\n\
+             Version:        {version}\n\
+             OS:             {os}\n\
+             Node Status:    {status}\n\
+             Gateway URL:    {masked_url}\n\
+             Gateway Token:  {masked_token}\n\
+             Last Error:     {last_error}\n\
+             Last Connected: {last_connected}\n\
+             Uptime:         {uptime}\n\
+             Node Name:      {node_name}\n\
+             Gateway Version:{gw_version}"
+        )
+    }
+
     pub fn show_download_update(&mut self, tag: &str) {
         self.pending_update_tag = Some(tag.to_string());
         self.download_update_item
@@ -353,6 +401,8 @@ impl TrayState {
             } else {
                 return;
             }
+        } else if id == self.copy_diagnostics_id {
+            TrayCommand::CopyDiagnostics
         } else if id == self.uninstall_id {
             TrayCommand::Uninstall
         } else if id == self.exit_id {
@@ -397,6 +447,13 @@ impl TrayState {
             .map_err(|e| AppError::Tray(e.to_string()))?;
         Ok(())
     }
+}
+
+pub fn mask_token(token: &str) -> String {
+    if token.len() <= 8 {
+        return "****".to_string();
+    }
+    format!("{}***{}", &token[..4], &token[token.len() - 4..])
 }
 
 fn truncate_error(msg: &str) -> String {
