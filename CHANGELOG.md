@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.0] - 2026-03-19
+
+### Added
+- **Multi-Node support** — monitor multiple Gateways with `[[connections]]` config
+- **Gateway Stats** — active sessions, error count (24h), last agent activity in tray
+- **macOS .app bundle** — DMG packaging, proper notifications, drag to Applications
+- **Windows installer** — NSIS installer with Start Menu shortcut + AUMID
+- **Install to system** — `--install` flag or Setup Wizard option, installs to `%LOCALAPPDATA%`
+- **macOS .app autostart** — launchd plist with `open -a` when running from .app bundle
+- **Proper uninstall** — removes install dir, registry/plist/desktop, config, device keys
+- **First-run notification** — "Right-click the tray icon to see options"
+- **Settings multi-connection editor** — add/remove/edit connections in GUI
+
+### Fixed
+- NSIS installer MUI_ICON error (conditional .ico check)
+- ICO auto-generation in CI from PNG
+
 ## [0.5.0] - 2026-03-19
 
 ### Added
