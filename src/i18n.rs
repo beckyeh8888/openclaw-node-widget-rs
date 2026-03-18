@@ -259,6 +259,12 @@ fn en<'a>(key: &'a str) -> &'a str {
         "gateway_connected" => "Connected",
         "gateway_node_offline" => "Connected (node offline)",
 
+        // Multi-connection
+        "connections_label" => "Connections",
+        "connection_name" => "Name",
+        "add_connection" => "+ Add Connection",
+        "remove" => "Remove",
+
         // Gateway Stats
         "stats_sessions" => "Sessions: ",
         "stats_errors_24h" => "Errors (24h): ",
@@ -366,6 +372,11 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "gateway_connected" => "已連線",
         "gateway_node_offline" => "已連線（節點離線）",
 
+        "connections_label" => "連線",
+        "connection_name" => "名稱",
+        "add_connection" => "+ 新增連線",
+        "remove" => "移除",
+
         "stats_sessions" => "工作階段: ",
         "stats_errors_24h" => "錯誤 (24h): ",
         "stats_last_activity" => "最後活動: ",
@@ -468,6 +479,11 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "gateway_connecting" => "连接中...",
         "gateway_connected" => "已连接",
         "gateway_node_offline" => "已连接（节点离线）",
+
+        "connections_label" => "连接",
+        "connection_name" => "名称",
+        "add_connection" => "+ 添加连接",
+        "remove" => "移除",
 
         "stats_sessions" => "会话: ",
         "stats_errors_24h" => "错误 (24h): ",

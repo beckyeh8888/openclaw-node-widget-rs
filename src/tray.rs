@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use image::ImageFormat;
 use notify_rust::Notification;
 use tokio::sync::mpsc;
@@ -32,6 +34,19 @@ pub enum TrayCommand {
     Exit,
 }
 
+/// Per-connection state tracked in the tray
+struct ConnectionTrayState {
+    menu_item: MenuItem,
+    gateway_version: Option<String>,
+    node_name: Option<String>,
+    connected_at: Option<std::time::Instant>,
+    last_connected: Option<chrono::DateTime<chrono::Local>>,
+    last_error: Option<String>,
+    online: Option<bool>,
+    stats: GatewayStats,
+    status_label: String,
+}
+
 pub struct TrayState {
     tray: TrayIcon,
     status_item: MenuItem,
@@ -62,15 +77,14 @@ pub struct TrayState {
     last_crash_loop: bool,
     gateway_status: String,
     last_node_tooltip: String,
-    gateway_version: Option<String>,
-    node_name: Option<String>,
-    connected_at: Option<std::time::Instant>,
-    last_error: Option<String>,
-    last_connected: Option<chrono::DateTime<chrono::Local>>,
     stats_sessions_item: MenuItem,
     stats_errors_item: MenuItem,
     stats_activity_item: MenuItem,
-    gateway_stats: GatewayStats,
+    /// Per-connection state, keyed by connection name
+    connections: HashMap<String, ConnectionTrayState>,
+    /// Ordered connection names (for deterministic display)
+    connection_order: Vec<String>,
+    multi_connection: bool,
 }
 
 impl TrayState {
@@ -79,12 +93,60 @@ impl TrayState {
         auto_restart: bool,
         auto_start: bool,
         notifications_enabled: bool,
+        connection_names: &[String],
     ) -> Result<Self> {
         let menu = Menu::new();
         let a = |item: &dyn tray_icon::menu::IsMenuItem| -> Result<()> {
             menu.append(item).map_err(|e| AppError::Tray(e.to_string()))
         };
         let sep = || PredefinedMenuItem::separator();
+
+        let multi_connection = connection_names.len() > 1;
+
+        // Per-connection status items (only shown for multi-connection)
+        let mut connections = HashMap::new();
+        let mut connection_order = Vec::new();
+        if multi_connection {
+            for name in connection_names {
+                let label = format!("{}: {}", name, t("status_unknown"));
+                let item = MenuItem::new(&label, false, None);
+                a(&item)?;
+                connections.insert(
+                    name.clone(),
+                    ConnectionTrayState {
+                        menu_item: item,
+                        gateway_version: None,
+                        node_name: None,
+                        connected_at: None,
+                        last_connected: None,
+                        last_error: None,
+                        online: None,
+                        stats: GatewayStats::default(),
+                        status_label: t("status_unknown").to_string(),
+                    },
+                );
+                connection_order.push(name.clone());
+            }
+            a(&sep())?;
+        } else if connection_names.len() == 1 {
+            // Single connection — create entry without extra menu item
+            let name = &connection_names[0];
+            connections.insert(
+                name.clone(),
+                ConnectionTrayState {
+                    menu_item: MenuItem::new("", false, None), // unused for single
+                    gateway_version: None,
+                    node_name: None,
+                    connected_at: None,
+                    last_connected: None,
+                    last_error: None,
+                    online: None,
+                    stats: GatewayStats::default(),
+                    status_label: t("status_unknown").to_string(),
+                },
+            );
+            connection_order.push(name.clone());
+        }
 
         let status_item = MenuItem::new(format!("Node: {}", t("status_unknown")), false, None);
         let conn_detail_item = MenuItem::new(format!("{}{}", t("connection_details"), t("na")), false, None);
@@ -188,15 +250,12 @@ impl TrayState {
             last_crash_loop: false,
             gateway_status: t("gateway_not_configured").to_string(),
             last_node_tooltip: t("status_unknown").to_string(),
-            gateway_version: None,
-            node_name: None,
-            connected_at: None,
-            last_error: None,
-            last_connected: None,
             stats_sessions_item,
             stats_errors_item,
             stats_activity_item,
-            gateway_stats: GatewayStats::default(),
+            connections,
+            connection_order,
+            multi_connection,
         })
     }
 
@@ -261,50 +320,83 @@ impl TrayState {
 
     pub fn handle_gateway_event(&mut self, event: &GatewayEvent) -> Result<()> {
         match event {
-            GatewayEvent::Connected { gateway_version } => {
+            GatewayEvent::Connected { connection_name, gateway_version } => {
+                if let Some(cs) = self.connections.get_mut(connection_name) {
+                    cs.gateway_version = gateway_version.clone();
+                    cs.connected_at = Some(std::time::Instant::now());
+                    cs.last_connected = Some(chrono::Local::now());
+                    cs.status_label = t("gateway_connected").to_string();
+                }
                 self.gateway_status = t("gateway_connected").to_string();
-                self.gateway_version = gateway_version.clone();
-                self.connected_at = Some(std::time::Instant::now());
-                self.last_connected = Some(chrono::Local::now());
             }
-            GatewayEvent::Disconnected(reason) => {
+            GatewayEvent::Disconnected { connection_name, reason } => {
+                if let Some(cs) = self.connections.get_mut(connection_name) {
+                    cs.connected_at = None;
+                    cs.last_error = Some(truncate_error(reason));
+                    cs.online = None;
+                    cs.status_label = format!("Disconnected: {}", truncate_error(reason));
+                }
                 self.gateway_status = format!("Disconnected: {reason}");
-                self.connected_at = None;
-                self.last_error = Some(truncate_error(reason));
             }
-            GatewayEvent::NodeStatus { online, node_name, stats } => {
+            GatewayEvent::NodeStatus { connection_name, online, node_name, stats } => {
+                if let Some(cs) = self.connections.get_mut(connection_name) {
+                    cs.online = Some(*online);
+                    if node_name.is_some() {
+                        cs.node_name = node_name.clone();
+                    }
+                    cs.stats = stats.clone();
+                    cs.status_label = if *online {
+                        t("status_online").to_string()
+                    } else {
+                        t("status_offline").to_string()
+                    };
+                }
                 self.gateway_status = if *online {
                     t("gateway_connected").to_string()
                 } else {
                     t("gateway_node_offline").to_string()
                 };
-                if node_name.is_some() {
-                    self.node_name = node_name.clone();
-                }
-                self.gateway_stats = stats.clone();
-                self.update_stats_items();
             }
-            GatewayEvent::Error(message) => {
+            GatewayEvent::Error { connection_name, message } => {
+                if let Some(cs) = self.connections.get_mut(connection_name) {
+                    cs.connected_at = None;
+                    cs.last_error = Some(truncate_error(message));
+                    cs.online = None;
+                    cs.status_label = format!("Error: {}", truncate_error(message));
+                }
                 self.gateway_status = format!("Error: {message}");
-                self.connected_at = None;
-                self.last_error = Some(truncate_error(message));
             }
         };
+        self.update_connection_items();
         self.update_conn_detail();
         self.update_diagnostics_items();
+        self.update_stats_items();
         self.refresh_tooltip()
     }
 
+    fn update_connection_items(&mut self) {
+        if !self.multi_connection {
+            return;
+        }
+        for name in &self.connection_order {
+            if let Some(cs) = self.connections.get(name) {
+                cs.menu_item.set_text(&format!("{}: {}", name, cs.status_label));
+            }
+        }
+    }
+
     fn update_conn_detail(&mut self) {
-        let gw = self.gateway_version.as_deref().unwrap_or(t("na"));
-        let node = self.node_name.as_deref().unwrap_or(t("na"));
-        let uptime = match self.connected_at {
+        // For single connection, show its details. For multi, show primary (first) connection.
+        let primary = self.connection_order.first().and_then(|n| self.connections.get(n));
+        let gw = primary.and_then(|cs| cs.gateway_version.as_deref()).unwrap_or(t("na"));
+        let node = primary.and_then(|cs| cs.node_name.as_deref()).unwrap_or(t("na"));
+        let uptime = match primary.and_then(|cs| cs.connected_at) {
             Some(at) => {
                 let secs = at.elapsed().as_secs();
                 if secs < 60 {
                     t("just_now").to_string()
                 } else if secs < 3600 {
-                    format!("{}{}",secs / 60, t("minutes_short"))
+                    format!("{}{}", secs / 60, t("minutes_short"))
                 } else {
                     format!("{}{} {}{}", secs / 3600, t("hours_short"), (secs % 3600) / 60, t("minutes_short"))
                 }
@@ -315,14 +407,21 @@ impl TrayState {
     }
 
     fn update_diagnostics_items(&mut self) {
-        let error_text = self
-            .last_error
-            .as_deref()
-            .unwrap_or(t("none"));
+        // Show most recent error across all connections
+        let last_error = self.connection_order.iter()
+            .filter_map(|n| self.connections.get(n))
+            .filter_map(|cs| cs.last_error.as_deref())
+            .next();
+        let error_text = last_error.unwrap_or(t("none"));
         self.last_error_item
             .set_text(&format!("{}{}", t("last_error_label"), error_text));
 
-        let connected_text = match self.last_connected {
+        // Show most recent connected time
+        let last_connected = self.connection_order.iter()
+            .filter_map(|n| self.connections.get(n))
+            .filter_map(|cs| cs.last_connected)
+            .max();
+        let connected_text = match last_connected {
             Some(dt) => format_last_connected(dt),
             None => t("na").to_string(),
         };
@@ -331,44 +430,57 @@ impl TrayState {
     }
 
     fn update_stats_items(&mut self) {
+        // Aggregate stats across all connections
+        let total_sessions: u32 = self.connections.values().map(|cs| cs.stats.active_sessions).sum();
+        let total_errors: u32 = self.connections.values().map(|cs| cs.stats.total_errors_24h).sum();
+        let last_activity = self.connection_order.iter()
+            .filter_map(|n| self.connections.get(n))
+            .filter_map(|cs| cs.stats.last_agent_activity.as_deref())
+            .next();
+
         self.stats_sessions_item
-            .set_text(&format!("{}{}", t("stats_sessions"), self.gateway_stats.active_sessions));
+            .set_text(&format!("{}{}", t("stats_sessions"), total_sessions));
         self.stats_errors_item
-            .set_text(&format!("{}{}", t("stats_errors_24h"), self.gateway_stats.total_errors_24h));
-        let activity = self
-            .gateway_stats
-            .last_agent_activity
-            .as_deref()
-            .unwrap_or(t("na"));
+            .set_text(&format!("{}{}", t("stats_errors_24h"), total_errors));
+        let activity = last_activity.unwrap_or(t("na"));
         self.stats_activity_item
             .set_text(&format!("{}{}", t("stats_last_activity"), activity));
     }
 
-    pub fn collect_diagnostics(&self, gateway_url: Option<&str>, gateway_token: Option<&str>) -> String {
+    pub fn collect_diagnostics(&self, connections: &[crate::config::ConnectionConfig]) -> String {
         let version = env!("CARGO_PKG_VERSION");
         let os = format!("{} {}", std::env::consts::OS, std::env::consts::ARCH);
         let status = self
             .last_status
             .map(|s| format!("{:?}", s))
             .unwrap_or_else(|| "Unknown".to_string());
-        let masked_url = gateway_url.unwrap_or("N/A");
-        let masked_token = gateway_token
-            .map(|t| mask_token(t))
-            .unwrap_or_else(|| "N/A".to_string());
-        let last_error = self.last_error.as_deref().unwrap_or("None");
-        let last_connected = self
-            .last_connected
-            .map(|dt| format_last_connected(dt))
-            .unwrap_or_else(|| "N/A".to_string());
-        let uptime = match self.connected_at {
-            Some(at) => {
+
+        let mut conn_lines = String::new();
+        for conn in connections {
+            let masked_token = conn.gateway_token
+                .as_deref()
+                .map(mask_token)
+                .unwrap_or_else(|| "N/A".to_string());
+            let cs_info = self.connections.get(&conn.name)
+                .map(|cs| format!("status={}, error={}", cs.status_label, cs.last_error.as_deref().unwrap_or("None")))
+                .unwrap_or_else(|| "no state".to_string());
+            conn_lines.push_str(&format!(
+                "\n  [{name}] url={url} token={token} {info}",
+                name = conn.name,
+                url = conn.gateway_url,
+                token = masked_token,
+                info = cs_info,
+            ));
+        }
+
+        let uptime = self.connection_order.first()
+            .and_then(|n| self.connections.get(n))
+            .and_then(|cs| cs.connected_at)
+            .map(|at| {
                 let secs = at.elapsed().as_secs();
                 format!("{}h {}m {}s", secs / 3600, (secs % 3600) / 60, secs % 60)
-            }
-            None => "N/A".to_string(),
-        };
-        let node_name = self.node_name.as_deref().unwrap_or("N/A");
-        let gw_version = self.gateway_version.as_deref().unwrap_or("N/A");
+            })
+            .unwrap_or_else(|| "N/A".to_string());
 
         format!(
             "OpenClaw Node Widget Diagnostics\n\
@@ -376,13 +488,9 @@ impl TrayState {
              Version:        {version}\n\
              OS:             {os}\n\
              Node Status:    {status}\n\
-             Gateway URL:    {masked_url}\n\
-             Gateway Token:  {masked_token}\n\
-             Last Error:     {last_error}\n\
-             Last Connected: {last_connected}\n\
-             Uptime:         {uptime}\n\
-             Node Name:      {node_name}\n\
-             Gateway Version:{gw_version}"
+             Connections:    {count}{conn_lines}\n\
+             Uptime:         {uptime}",
+            count = connections.len(),
         )
     }
 
@@ -469,11 +577,19 @@ impl TrayState {
     }
 
     fn refresh_tooltip(&mut self) -> Result<()> {
-        self.tray
-            .set_tooltip(Some(format!(
+        let tooltip = if self.multi_connection {
+            let parts: Vec<String> = self.connection_order.iter()
+                .filter_map(|n| self.connections.get(n).map(|cs| format!("{}: {}", n, cs.status_label)))
+                .collect();
+            format!("OpenClaw Node Widget\n{}", parts.join("\n"))
+        } else {
+            format!(
                 "OpenClaw Node: {}\nGateway: {}",
                 self.last_node_tooltip, self.gateway_status
-            )))
+            )
+        };
+        self.tray
+            .set_tooltip(Some(tooltip))
             .map_err(|e| AppError::Tray(e.to_string()))?;
         Ok(())
     }
@@ -509,7 +625,6 @@ fn icon_for_status(status: NodeStatus) -> Result<Icon> {
         NodeStatus::Offline | NodeStatus::Stopped | NodeStatus::GatewayDown | NodeStatus::AuthFailed => {
             include_bytes!("../assets/icon_offline.png").as_slice()
         }
-        // Reconnecting/Unknown use the yellow/unknown icon
         NodeStatus::Reconnecting | NodeStatus::Unknown => {
             include_bytes!("../assets/icon_unknown.png").as_slice()
         }
@@ -556,7 +671,6 @@ fn send_notification_windows(body: &str) {
     use std::os::windows::process::CommandExt;
     use winrt_notification::{Toast, Duration as ToastDuration};
 
-    // Register shortcut with AUMID on first use (one-time, silent)
     ensure_start_menu_shortcut();
 
     const AUM_ID: &str = "OpenClaw.NodeWidget";
@@ -571,9 +685,6 @@ fn send_notification_windows(body: &str) {
     }
 }
 
-/// Create a Start Menu shortcut with System.AppUserModel.ID property.
-/// Required for toast to show "OpenClaw Node Widget" instead of "Windows PowerShell".
-/// Only runs once, silently, no visible window.
 #[cfg(windows)]
 fn ensure_start_menu_shortcut() {
     use std::os::windows::process::CommandExt;
@@ -595,20 +706,15 @@ fn ensure_start_menu_shortcut() {
             .display()
             .to_string();
 
-        // PowerShell script to create .lnk with AUMID property via COM
         let script = format!(
             r#"$WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut('{lnk}')
 $Shortcut.TargetPath = '{exe}'
 $Shortcut.Description = 'OpenClaw Node Widget'
 $Shortcut.Save()
-# Set AppUserModelID via Shell property store
 $shell = New-Object -ComObject Shell.Application
 $dir = $shell.Namespace((Split-Path '{lnk}'))
 $item = $dir.ParseName((Split-Path '{lnk}' -Leaf))
-# AppUserModelID is property index 27 in System.AppUserModel.ID
-# Use alternative: write AUMID directly via IPropertyStore (not available in pure PS)
-# Workaround: register via registry
 $regPath = 'HKCU:\Software\Classes\AppUserModelId\OpenClaw.NodeWidget'
 if (-not (Test-Path $regPath)) {{
     New-Item -Path $regPath -Force | Out-Null

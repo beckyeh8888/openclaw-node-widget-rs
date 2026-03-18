@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fs, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::error::{AppError, Result};
 
@@ -13,6 +14,8 @@ pub struct Config {
     pub startup: StartupConfig,
     pub appearance: AppearanceConfig,
     pub log: LogConfig,
+    #[serde(default)]
+    pub connections: Vec<ConnectionConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -20,6 +23,14 @@ pub struct Config {
 pub struct GatewayConfig {
     pub url: Option<String>,
     pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionConfig {
+    pub name: String,
+    pub gateway_url: String,
+    #[serde(default)]
+    pub gateway_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,6 +91,7 @@ impl Default for Config {
             startup: StartupConfig::default(),
             appearance: AppearanceConfig::default(),
             log: LogConfig::default(),
+            connections: Vec::new(),
         }
     }
 }
@@ -153,18 +165,60 @@ impl Default for LogConfig {
 }
 
 impl Config {
+    /// Returns the effective list of connections.
+    /// If `[[connections]]` is populated, use those.
+    /// Otherwise, if old-style `[gateway]` has a URL, treat it as a single "Default" connection.
+    pub fn effective_connections(&self) -> Vec<ConnectionConfig> {
+        if !self.connections.is_empty() {
+            return self.connections.clone();
+        }
+
+        // Backward compat: convert old [gateway] section
+        if let Some(url) = self.gateway.url.as_ref().filter(|u| !u.trim().is_empty()) {
+            vec![ConnectionConfig {
+                name: "Default".to_string(),
+                gateway_url: url.clone(),
+                gateway_token: self.gateway.token.clone(),
+            }]
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn validate(&self) -> Vec<String> {
         let mut errors = Vec::new();
 
-        if let Some(url) = &self.gateway.url {
-            if !url.is_empty() && !url.starts_with("ws://") && !url.starts_with("wss://") {
-                errors.push(format!("Gateway URL must start with ws:// or wss://, got: {url}"));
+        // Validate old-style gateway if no connections defined
+        if self.connections.is_empty() {
+            if let Some(url) = &self.gateway.url {
+                if !url.is_empty() && !url.starts_with("ws://") && !url.starts_with("wss://") {
+                    errors.push(format!("Gateway URL must start with ws:// or wss://, got: {url}"));
+                }
+            }
+
+            if let Some(token) = &self.gateway.token {
+                if token.trim().is_empty() {
+                    errors.push("Gateway token is empty".to_string());
+                }
             }
         }
 
-        if let Some(token) = &self.gateway.token {
-            if token.trim().is_empty() {
-                errors.push("Gateway token is empty".to_string());
+        // Validate each connection
+        for (i, conn) in self.connections.iter().enumerate() {
+            let label = if conn.name.is_empty() {
+                format!("Connection #{}", i + 1)
+            } else {
+                conn.name.clone()
+            };
+            if conn.gateway_url.is_empty() {
+                errors.push(format!("{label}: gateway_url is empty"));
+            } else if !conn.gateway_url.starts_with("ws://") && !conn.gateway_url.starts_with("wss://") {
+                errors.push(format!("{label}: gateway_url must start with ws:// or wss://"));
+            }
+            if let Some(token) = &conn.gateway_token {
+                if token.trim().is_empty() {
+                    errors.push(format!("{label}: gateway_token is empty"));
+                }
             }
         }
 
@@ -191,7 +245,28 @@ impl Config {
         }
 
         let content = fs::read_to_string(&path)?;
-        toml::from_str(&content).map_err(|e| AppError::Config(e.to_string()))
+        let mut config: Config = toml::from_str(&content).map_err(|e| AppError::Config(e.to_string()))?;
+
+        // Auto-migrate: if old [gateway] exists but no [[connections]], migrate
+        if config.connections.is_empty() {
+            if let Some(url) = config.gateway.url.as_ref().filter(|u| !u.trim().is_empty()) {
+                info!("migrating old [gateway] config to [[connections]] format");
+                config.connections.push(ConnectionConfig {
+                    name: "Default".to_string(),
+                    gateway_url: url.clone(),
+                    gateway_token: config.gateway.token.clone(),
+                });
+                // Clear old gateway section
+                config.gateway.url = None;
+                config.gateway.token = None;
+                // Save migrated config
+                if let Err(e) = config.save() {
+                    tracing::warn!("failed to save migrated config: {e}");
+                }
+            }
+        }
+
+        Ok(config)
     }
 
     pub fn save(&self) -> Result<()> {

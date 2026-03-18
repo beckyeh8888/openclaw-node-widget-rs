@@ -160,7 +160,7 @@ pub fn spawn_monitor(
                             gateway_status = GatewayStatus::Connected;
                             gateway_error = None;
                         }
-                        GatewayEvent::Disconnected(reason) => {
+                        GatewayEvent::Disconnected { reason, .. } => {
                             gateway_connected = false;
                             gateway_online = None;
                             gateway_status = GatewayStatus::Reconnecting;
@@ -174,10 +174,9 @@ pub fn spawn_monitor(
 
                             let _ = status_tx.send(status_from_gateway(gateway_online, None, gateway_connected, gateway_status, crash_loop, stop_reason));
                         }
-                        GatewayEvent::Error(message) => {
+                        GatewayEvent::Error { message, .. } => {
                             gateway_connected = false;
                             gateway_online = None;
-                            // Distinguish auth failures from connection failures
                             if message.to_ascii_lowercase().contains("auth") || message.to_ascii_lowercase().contains("token") {
                                 gateway_status = GatewayStatus::AuthFailed;
                             } else {

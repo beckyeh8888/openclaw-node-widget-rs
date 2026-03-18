@@ -30,6 +30,7 @@ const DEVICE_PUBLIC_KEY_FILE: &str = "device.pub";
 
 #[derive(Debug)]
 pub struct GatewayClient {
+    pub connection_name: String,
     pub url: String,
     pub token: Option<String>,
     pub device_id: String,
@@ -48,15 +49,23 @@ pub struct GatewayStats {
 #[derive(Debug, Clone)]
 pub enum GatewayEvent {
     Connected {
+        connection_name: String,
         gateway_version: Option<String>,
     },
-    Disconnected(String),
+    Disconnected {
+        connection_name: String,
+        reason: String,
+    },
     NodeStatus {
+        connection_name: String,
         online: bool,
         node_name: Option<String>,
         stats: GatewayStats,
     },
-    Error(String),
+    Error {
+        connection_name: String,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -134,7 +143,8 @@ pub fn sign_payload(key: &SigningKey, payload: &str) -> String {
     BASE64.encode(signature.to_bytes())
 }
 
-pub async fn spawn_if_configured(
+pub async fn spawn_connection(
+    connection_name: String,
     url: Option<String>,
     token: Option<String>,
     tx: mpsc::UnboundedSender<GatewayEvent>,
@@ -146,9 +156,10 @@ pub async fn spawn_if_configured(
     let config_dir = match config::app_dir() {
         Ok(path) => path,
         Err(err) => {
-            let _ = tx.send(GatewayEvent::Error(format!(
-                "gateway config path error: {err}"
-            )));
+            let _ = tx.send(GatewayEvent::Error {
+                connection_name,
+                message: format!("gateway config path error: {err}"),
+            });
             return false;
         }
     };
@@ -156,12 +167,16 @@ pub async fn spawn_if_configured(
     let (private_key, device_id, public_key_pem) = match load_or_create_keypair(&config_dir) {
         Ok(values) => values,
         Err(err) => {
-            let _ = tx.send(GatewayEvent::Error(err));
+            let _ = tx.send(GatewayEvent::Error {
+                connection_name,
+                message: err,
+            });
             return false;
         }
     };
 
     let client = GatewayClient {
+        connection_name,
         url,
         token,
         device_id,
@@ -177,8 +192,30 @@ pub async fn spawn_if_configured(
     true
 }
 
+/// Spawn gateway tasks for all configured connections. Returns the number spawned.
+pub async fn spawn_all_connections(
+    connections: &[config::ConnectionConfig],
+    tx: mpsc::UnboundedSender<GatewayEvent>,
+) -> usize {
+    let mut count = 0;
+    for conn in connections {
+        let spawned = spawn_connection(
+            conn.name.clone(),
+            Some(conn.gateway_url.clone()),
+            conn.gateway_token.clone(),
+            tx.clone(),
+        )
+        .await;
+        if spawned {
+            count += 1;
+        }
+    }
+    count
+}
+
 pub async fn connect_loop(client: GatewayClient) {
     let mut delay_secs = 1u64;
+    let name = client.connection_name.clone();
 
     loop {
         let result = connect_once(&client).await;
@@ -186,16 +223,23 @@ pub async fn connect_loop(client: GatewayClient) {
         match result {
             Ok(()) => {
                 delay_secs = 1;
-                let _ = client.tx.send(GatewayEvent::Disconnected(
-                    "gateway disconnected".to_string(),
-                ));
+                let _ = client.tx.send(GatewayEvent::Disconnected {
+                    connection_name: name.clone(),
+                    reason: "gateway disconnected".to_string(),
+                });
             }
             Err(ConnectError::Fatal(message)) => {
-                let _ = client.tx.send(GatewayEvent::Error(message));
+                let _ = client.tx.send(GatewayEvent::Error {
+                    connection_name: name.clone(),
+                    message,
+                });
                 break;
             }
             Err(ConnectError::Retryable(message)) => {
-                let _ = client.tx.send(GatewayEvent::Disconnected(message));
+                let _ = client.tx.send(GatewayEvent::Disconnected {
+                    connection_name: name.clone(),
+                    reason: message,
+                });
             }
         }
 
@@ -444,8 +488,11 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
         .and_then(Value::as_str)
         .map(String::from);
 
-    info!(?gateway_version, "gateway connected, node status will be polled via node.list");
-    let _ = client.tx.send(GatewayEvent::Connected { gateway_version });
+    info!(connection = %client.connection_name, ?gateway_version, "gateway connected, node status will be polled via node.list");
+    let _ = client.tx.send(GatewayEvent::Connected {
+        connection_name: client.connection_name.clone(),
+        gateway_version,
+    });
 
     // Attempt to subscribe to gateway events (best-effort, may not be supported)
     let subscribe_id = Uuid::new_v4().to_string();
@@ -493,7 +540,7 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                 match message.map_err(|e| ConnectError::Retryable(format!("gateway read failed: {e}")))? {
                     Message::Text(text) => {
                         let frame = parse_frame(&text)?;
-                        handle_frame(&client.tx, &frame, pending_presence.as_deref());
+                        handle_frame(&client.connection_name, &client.tx, &frame, pending_presence.as_deref());
 
                         if frame_type(&frame) == Some("res") {
                             let id = frame.get("id").and_then(Value::as_str);
@@ -522,6 +569,7 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
 }
 
 fn handle_frame(
+    connection_name: &str,
     tx: &mpsc::UnboundedSender<GatewayEvent>,
     frame: &Value,
     pending_presence: Option<&str>,
@@ -530,7 +578,7 @@ fn handle_frame(
         Some("event") => {
             if let Some(event_name) = frame_name(frame) {
                 debug!(event = event_name, "gateway event received");
-                if let Some(event) = node_status_from_event(event_name, frame.get("payload")) {
+                if let Some(event) = node_status_from_event(connection_name, event_name, frame.get("payload")) {
                     let _ = tx.send(event);
                 }
             }
@@ -546,7 +594,7 @@ fn handle_frame(
                         let node_count = payload.get("nodes").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
                         info!(node_count, "node.list response OK");
                     }
-                    if let Some(event) = node_status_from_node_list(frame.get("payload")) {
+                    if let Some(event) = node_status_from_node_list(connection_name, frame.get("payload")) {
                         let _ = tx.send(event);
                     }
                 } else {
@@ -559,16 +607,14 @@ fn handle_frame(
     }
 }
 
-fn node_status_from_event(event_name: &str, _payload: Option<&Value>) -> Option<GatewayEvent> {
+fn node_status_from_event(connection_name: &str, event_name: &str, _payload: Option<&Value>) -> Option<GatewayEvent> {
     match event_name {
-        // presence events are for WS clients, not paired nodes — ignore for node status
-        // node status is polled via node.list on ticker
         "presence" => None,
-        // tick event — just keep alive, no status change
         "tick" => None,
-        // shutdown — gateway going down
-        "shutdown" => Some(GatewayEvent::Disconnected("gateway shutdown".to_string())),
-        // session/agent events — logged for future use, stats updated via node.list polling
+        "shutdown" => Some(GatewayEvent::Disconnected {
+            connection_name: connection_name.to_string(),
+            reason: "gateway shutdown".to_string(),
+        }),
         "session.start" | "session.end" | "agent.error" => {
             debug!(event = event_name, "gateway subscription event received");
             None
@@ -579,7 +625,7 @@ fn node_status_from_event(event_name: &str, _payload: Option<&Value>) -> Option<
 
 // is_node_presence removed — node status now determined via node.list API only
 
-fn node_status_from_node_list(payload: Option<&Value>) -> Option<GatewayEvent> {
+fn node_status_from_node_list(connection_name: &str, payload: Option<&Value>) -> Option<GatewayEvent> {
     let payload = payload?;
     // node.list response: payload is an array of nodes OR { nodes: [...] }
     let items = payload
@@ -631,6 +677,7 @@ fn node_status_from_node_list(payload: Option<&Value>) -> Option<GatewayEvent> {
     };
 
     Some(GatewayEvent::NodeStatus {
+        connection_name: connection_name.to_string(),
         online: node_online,
         node_name,
         stats,

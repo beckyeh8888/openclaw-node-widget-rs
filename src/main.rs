@@ -69,11 +69,20 @@ async fn run() -> error::Result<i32> {
 
     let mut config = Config::load()?;
 
+    // CLI overrides apply to the first connection (backward compat)
     if let Some(url) = cli.gateway {
-        config.gateway.url = Some(url);
+        if config.connections.is_empty() {
+            config.gateway.url = Some(url);
+        } else if let Some(first) = config.connections.first_mut() {
+            first.gateway_url = url;
+        }
     }
     if let Some(token) = cli.token {
-        config.gateway.token = Some(token);
+        if config.connections.is_empty() {
+            config.gateway.token = Some(token);
+        } else if let Some(first) = config.connections.first_mut() {
+            first.gateway_token = Some(token);
+        }
     }
 
     match command {
@@ -162,12 +171,21 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     let (gateway_event_tx, mut gateway_event_rx) = mpsc::unbounded_channel();
     let (gateway_monitor_tx, gateway_monitor_rx) = mpsc::unbounded_channel();
 
-    let gateway_enabled = gateway::spawn_if_configured(
-        config.gateway.url.clone(),
-        config.gateway.token.clone(),
+    let effective_connections = config.effective_connections();
+    let connection_names: Vec<String> = effective_connections.iter().map(|c| c.name.clone()).collect();
+
+    let gateway_count = gateway::spawn_all_connections(
+        &effective_connections,
         gateway_event_tx,
     )
     .await;
+    let gateway_enabled = gateway_count > 0;
+
+    info!(
+        count = gateway_count,
+        connections = ?connection_names,
+        "gateway connections spawned"
+    );
 
     spawn_monitor(
         config.clone(),
@@ -186,6 +204,7 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
         config.widget.auto_restart,
         autostart::effective_autostart(&config),
         config.widget.notifications,
+        &connection_names,
     )?;
     tray.set_gateway_configured(gateway_enabled)?;
 
@@ -248,8 +267,10 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                     }
                 },
                 TrayCommand::OpenGatewayUi => {
-                    if let Some(url) = &config.gateway.url {
-                        let http_url = url.replace("ws://", "http://").replace("wss://", "https://");
+                    // Open the first connection's gateway UI
+                    let conns = config.effective_connections();
+                    if let Some(conn) = conns.first() {
+                        let http_url = conn.gateway_url.replace("ws://", "http://").replace("wss://", "https://");
                         info!("opening gateway UI: {http_url}");
                         let _ = open::that(&http_url);
                     }
@@ -309,10 +330,8 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                     });
                 }
                 TrayCommand::CopyDiagnostics => {
-                    let diag = tray.collect_diagnostics(
-                        config.gateway.url.as_deref(),
-                        config.gateway.token.as_deref(),
-                    );
+                    let conns = config.effective_connections();
+                    let diag = tray.collect_diagnostics(&conns);
                     match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(diag)) {
                         Ok(()) => {
                             tray::send_notification_public(i18n::t("diagnostics_copied"));
@@ -351,12 +370,13 @@ async fn run_daemon(config: Config) -> error::Result<()> {
     let (gateway_event_tx, mut gateway_event_rx) = mpsc::unbounded_channel();
     let (gateway_monitor_tx, gateway_monitor_rx) = mpsc::unbounded_channel();
 
-    let gateway_enabled = gateway::spawn_if_configured(
-        config.gateway.url.clone(),
-        config.gateway.token.clone(),
+    let effective_connections = config.effective_connections();
+    let gateway_count = gateway::spawn_all_connections(
+        &effective_connections,
         gateway_event_tx,
     )
     .await;
+    let gateway_enabled = gateway_count > 0;
 
     spawn_monitor(
         config,
@@ -402,15 +422,15 @@ fn run_status() -> error::Result<i32> {
         Err(err) => println!("Node: Unknown ({err})"),
     }
 
-    println!(
-        "Gateway: {}",
-        config
-            .gateway
-            .url
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .unwrap_or("(not configured)")
-    );
+    let conns = config.effective_connections();
+    if conns.is_empty() {
+        println!("Gateway: (not configured)");
+    } else {
+        for conn in &conns {
+            println!("Connection [{}]: {}", conn.name, conn.gateway_url);
+        }
+    }
+
     println!(
         "Auto-restart: {}",
         if config.widget.auto_restart {

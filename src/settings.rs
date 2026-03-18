@@ -4,7 +4,7 @@ use eframe::egui;
 
 use crate::{
     autostart,
-    config::Config,
+    config::{Config, ConnectionConfig},
     error::{AppError, Result},
     i18n::t,
 };
@@ -21,7 +21,7 @@ pub fn run_settings_window(config: &Config) -> Result<Option<Config>> {
     let initial = config.clone();
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([460.0, 380.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([500.0, 500.0]),
         ..Default::default()
     };
 
@@ -48,10 +48,15 @@ pub fn run_settings_window(config: &Config) -> Result<Option<Config>> {
     Ok(saved)
 }
 
-struct SettingsApp {
-    shared: Arc<Mutex<SharedState>>,
+struct ConnectionEdit {
+    name: String,
     gateway_url: String,
     gateway_token: String,
+}
+
+struct SettingsApp {
+    shared: Arc<Mutex<SharedState>>,
+    connections: Vec<ConnectionEdit>,
     auto_restart: bool,
     auto_start: bool,
     check_interval: f32,
@@ -66,9 +71,26 @@ struct SettingsApp {
 
 impl SettingsApp {
     fn new(config: Config, shared: Arc<Mutex<SharedState>>) -> Self {
+        let effective = config.effective_connections();
+        let connections: Vec<ConnectionEdit> = if effective.is_empty() {
+            // Show one empty connection editor
+            vec![ConnectionEdit {
+                name: "Default".to_string(),
+                gateway_url: String::new(),
+                gateway_token: String::new(),
+            }]
+        } else {
+            effective
+                .iter()
+                .map(|c| ConnectionEdit {
+                    name: c.name.clone(),
+                    gateway_url: c.gateway_url.clone(),
+                    gateway_token: c.gateway_token.clone().unwrap_or_default(),
+                })
+                .collect()
+        };
+
         Self {
-            gateway_url: config.gateway.url.clone().unwrap_or_default(),
-            gateway_token: config.gateway.token.clone().unwrap_or_default(),
             auto_restart: config.widget.auto_restart,
             auto_start: autostart::effective_autostart(&config),
             check_interval: config.widget.check_interval_secs as f32,
@@ -83,6 +105,7 @@ impl SettingsApp {
             base_config: config,
             dark_mode_applied: false,
             shared,
+            connections,
         }
     }
 
@@ -91,16 +114,32 @@ impl SettingsApp {
         self.save_error = None;
 
         let mut config = self.base_config.clone();
-        config.gateway.url = if self.gateway_url.trim().is_empty() {
-            None
-        } else {
-            Some(self.gateway_url.trim().to_string())
-        };
-        config.gateway.token = if self.gateway_token.trim().is_empty() {
-            None
-        } else {
-            Some(self.gateway_token.trim().to_string())
-        };
+
+        // Build connections from editor state
+        let connections: Vec<ConnectionConfig> = self
+            .connections
+            .iter()
+            .filter(|c| !c.gateway_url.trim().is_empty())
+            .map(|c| ConnectionConfig {
+                name: if c.name.trim().is_empty() {
+                    "Default".to_string()
+                } else {
+                    c.name.trim().to_string()
+                },
+                gateway_url: c.gateway_url.trim().to_string(),
+                gateway_token: if c.gateway_token.trim().is_empty() {
+                    None
+                } else {
+                    Some(c.gateway_token.trim().to_string())
+                },
+            })
+            .collect();
+
+        config.connections = connections;
+        // Clear old-style gateway fields
+        config.gateway.url = None;
+        config.gateway.token = None;
+
         config.widget.auto_restart = self.auto_restart;
         config.widget.check_interval_secs = self.check_interval as u64;
         config.widget.notifications = self.notifications;
@@ -138,20 +177,61 @@ impl eframe::App for SettingsApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading(t("settings_title"));
+            ui.add_space(8.0);
+
+            // Connections section
+            ui.label(t("connections_label"));
+            ui.add_space(4.0);
+
+            let conn_count = self.connections.len();
+            let mut remove_idx = None;
+            for i in 0..conn_count {
+                ui.group(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(t("connection_name"));
+                        ui.text_edit_singleline(&mut self.connections[i].name);
+                        if conn_count > 1 {
+                            if ui.button(t("remove")).clicked() {
+                                remove_idx = Some(i);
+                            }
+                        }
+                    });
+                    egui::Grid::new(format!("conn_grid_{i}"))
+                        .num_columns(2)
+                        .spacing([10.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.label(t("gateway_url"));
+                            ui.text_edit_singleline(&mut self.connections[i].gateway_url);
+                            ui.end_row();
+
+                            ui.label(t("gateway_token"));
+                            ui.text_edit_singleline(&mut self.connections[i].gateway_token);
+                            ui.end_row();
+                        });
+                });
+                ui.add_space(4.0);
+            }
+
+            if let Some(idx) = remove_idx {
+                self.connections.remove(idx);
+            }
+
+            if ui.button(t("add_connection")).clicked() {
+                self.connections.push(ConnectionEdit {
+                    name: format!("Connection {}", self.connections.len() + 1),
+                    gateway_url: String::new(),
+                    gateway_token: String::new(),
+                });
+            }
+
             ui.add_space(12.0);
+            ui.separator();
+            ui.add_space(8.0);
 
             egui::Grid::new("settings_grid")
                 .num_columns(2)
                 .spacing([10.0, 8.0])
                 .show(ui, |ui| {
-                    ui.label(t("gateway_url"));
-                    ui.text_edit_singleline(&mut self.gateway_url);
-                    ui.end_row();
-
-                    ui.label(t("gateway_token"));
-                    ui.text_edit_singleline(&mut self.gateway_token);
-                    ui.end_row();
-
                     ui.label(t("check_interval"));
                     ui.add(
                         egui::Slider::new(&mut self.check_interval, 5.0..=120.0)
