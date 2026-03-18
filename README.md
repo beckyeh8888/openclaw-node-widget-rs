@@ -38,6 +38,45 @@
 
 ---
 
+## Why Node + Widget? / 為什麼用 Node + Widget？
+
+> **You don't need OpenClaw on every computer.**
+>
+> Install OpenClaw once — on your home server, a Mac mini, a Raspberry Pi, whatever runs 24/7. That's your **Gateway** — the brain.
+>
+> Every other computer? Just install **Node** (lightweight agent endpoint) + **Widget** (system tray monitor). Node connects back to your Gateway via [Tailscale](https://tailscale.com). Done.
+>
+> Your AI agent can now **reach into any machine** running Node — run commands, read files, manage processes — all orchestrated from one central Gateway. The Widget lets you see it all at a glance.
+
+> **你不需要每台電腦都裝 OpenClaw。**
+>
+> OpenClaw 只裝一次 — 家裡的伺服器、Mac mini、Raspberry Pi，任何 24/7 運行的機器。這就是你的 **Gateway** — 大腦。
+>
+> 其他電腦？只要裝 **Node**（輕量級 agent 端點）+ **Widget**（系統列監控）。Node 透過 [Tailscale](https://tailscale.com) 連回 Gateway。搞定。
+>
+> 你的 AI agent 現在可以**伸手進任何跑 Node 的機器** — 執行指令、讀檔案、管理程序 — 全部由一個中央 Gateway 協調。Widget 讓你一目了然。
+
+```
+┌─────────────────────────────────────────────────┐
+│  🏠 Home Server (24/7)                          │
+│  ┌───────────┐  ┌──────────┐  ┌──────────────┐  │
+│  │  OpenClaw │──│ Gateway  │──│ AI Agents    │  │
+│  │  (brain)  │  │ :18789   │  │ main/占卜/... │  │
+│  └───────────┘  └────┬─────┘  └──────────────┘  │
+│                      │ Tailscale (100.x.x.x)    │
+└──────────────────────┼──────────────────────────┘
+                       │
+        ┌──────────────┼──────────────┐
+        │              │              │
+   ┌────▼────┐   ┌─────▼────┐   ┌────▼────┐
+   │💻 Office │   │🏠 Desktop│   │💻 Laptop│
+   │ Node     │   │ Node     │   │ Node    │
+   │ Widget 🟢│   │ Widget 🟢│   │ Widget🟢│
+   └─────────┘   └──────────┘   └─────────┘
+```
+
+---
+
 ## What is this? / 這是什麼？
 
 **OpenClaw Node Widget** is a lightweight system tray app that monitors your [OpenClaw](https://openclaw.ai) AI agent node. Think of it as a health dashboard for your always-on AI assistant — but it lives in your taskbar, not a browser tab.
