@@ -87,15 +87,46 @@ pub enum Lang {
     ZhCn,
 }
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 static LANG: OnceLock<Lang> = OnceLock::new();
+static OVERRIDE: AtomicU8 = AtomicU8::new(0); // 0=none, 1=En, 2=ZhTw, 3=ZhCn
 
 pub fn init() {
     LANG.get_or_init(detect_lang);
 }
 
-pub fn current_lang() -> Lang {
-    *LANG.get_or_init(detect_lang)
+pub fn init_with_config(language: &str) {
+    LANG.get_or_init(detect_lang);
+    set_language(language);
 }
+
+pub fn set_language(lang_str: &str) {
+    let val = match lang_str.to_lowercase().as_str() {
+        "en" | "english" => 1,
+        "zh-tw" | "zh_tw" | "繁體中文" => 2,
+        "zh-cn" | "zh_cn" | "简体中文" => 3,
+        _ => 0, // auto
+    };
+    OVERRIDE.store(val, Ordering::Relaxed);
+}
+
+pub fn current_lang() -> Lang {
+    let ov = OVERRIDE.load(Ordering::Relaxed);
+    match ov {
+        1 => Lang::En,
+        2 => Lang::ZhTw,
+        3 => Lang::ZhCn,
+        _ => *LANG.get_or_init(detect_lang),
+    }
+}
+
+pub const LANGUAGE_OPTIONS: &[(&str, &str)] = &[
+    ("auto", "Auto"),
+    ("en", "English"),
+    ("zh-tw", "繁體中文"),
+    ("zh-cn", "简体中文"),
+];
 
 fn detect_lang() -> Lang {
     let locale = sys_locale::get_locale()

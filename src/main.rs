@@ -145,7 +145,7 @@ fn init_tracing(config: &Config) {
 }
 
 async fn run_with_tray(mut config: Config) -> error::Result<()> {
-    i18n::init();
+    i18n::init_with_config(&config.widget.language);
     update::spawn_periodic_check();
 
     let (tray_cmd_tx, mut tray_cmd_rx) = mpsc::unbounded_channel();

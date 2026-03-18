@@ -57,6 +57,7 @@ struct SettingsApp {
     check_interval: f32,
     notifications: bool,
     notification_sound: bool,
+    language_idx: usize,
     save_message: Option<String>,
     save_error: Option<String>,
     base_config: Config,
@@ -73,6 +74,10 @@ impl SettingsApp {
             check_interval: config.widget.check_interval_secs as f32,
             notifications: config.widget.notifications,
             notification_sound: config.widget.notification_sound,
+            language_idx: crate::i18n::LANGUAGE_OPTIONS
+                .iter()
+                .position(|(code, _)| *code == config.widget.language)
+                .unwrap_or(0),
             save_message: None,
             save_error: None,
             base_config: config,
@@ -100,6 +105,8 @@ impl SettingsApp {
         config.widget.check_interval_secs = self.check_interval as u64;
         config.widget.notifications = self.notifications;
         config.widget.notification_sound = self.notification_sound;
+        config.widget.language = crate::i18n::LANGUAGE_OPTIONS[self.language_idx].0.to_string();
+        crate::i18n::set_language(&config.widget.language);
         config.startup.auto_start = self.auto_start;
 
         if let Err(err) = autostart::set_autostart(self.auto_start) {
@@ -167,6 +174,16 @@ impl eframe::App for SettingsApp {
 
                     ui.label(t("notification_sound"));
                     ui.checkbox(&mut self.notification_sound, "");
+                    ui.end_row();
+
+                    ui.label("Language");
+                    egui::ComboBox::from_id_salt("lang_combo")
+                        .selected_text(crate::i18n::LANGUAGE_OPTIONS[self.language_idx].1)
+                        .show_ui(ui, |ui| {
+                            for (i, (_code, label)) in crate::i18n::LANGUAGE_OPTIONS.iter().enumerate() {
+                                ui.selectable_value(&mut self.language_idx, i, *label);
+                            }
+                        });
                     ui.end_row();
                 });
 

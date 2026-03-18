@@ -42,6 +42,7 @@ pub struct WidgetConfig {
     pub crash_loop_secs: u64,
     pub notifications: bool,
     pub notification_sound: bool,
+    pub language: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -114,6 +115,7 @@ impl Default for WidgetConfig {
             crash_loop_secs: 300,
             notifications: true,
             notification_sound: true,
+            language: "auto".to_string(),
         }
     }
 }
