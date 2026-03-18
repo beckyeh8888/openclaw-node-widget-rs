@@ -136,29 +136,15 @@ impl TrayState {
         crash_loop: bool,
         stop_reason: StopReason,
     ) -> Result<()> {
-        let (status_text, tooltip_text) = if crash_loop {
-            (
-                "Node crash loop detected - auto-restart paused".to_string(),
-                "Node crash loop detected - auto-restart paused".to_string(),
-            )
+        let status_text = if crash_loop {
+            "Crash Loop".to_string()
         } else if status == NodeStatus::Offline && stop_reason == StopReason::Manual {
-            (
-                "Node stopped (manual)".to_string(),
-                "Node stopped (manual)".to_string(),
-            )
+            "Stopped".to_string()
         } else {
-            (detail.to_string(), detail.to_string())
+            detail.to_string()
         };
 
-        let icon = match status {
-            NodeStatus::Online => "✅",
-            NodeStatus::Offline => "🔴",
-            NodeStatus::Unknown => "⏳",
-        };
-        let label = match pid {
-            Some(pid) => format!("{icon} {status_text} (PID {pid})"),
-            None => format!("{icon} {status_text}"),
-        };
+        let label = format!("Node: {status_text}");
 
         self.status_item.set_text(&label);
         self.tray
@@ -176,7 +162,7 @@ impl TrayState {
         self.notify_transitions(status, crash_loop);
         self.last_status = Some(status);
         self.last_crash_loop = crash_loop;
-        self.last_node_tooltip = tooltip_text;
+        self.last_node_tooltip = status_text.clone();
 
         Ok(())
     }

@@ -250,9 +250,9 @@ fn status_from_gateway(
         format!("Gateway disconnected: {error}")
     } else {
         match status {
-            NodeStatus::Online => "Node Online".to_string(),
-            NodeStatus::Offline => "Node Offline (Gateway connected)".to_string(),
-            NodeStatus::Unknown => "Checking node status...".to_string(),
+            NodeStatus::Online => "Online".to_string(),
+            NodeStatus::Offline => "Offline".to_string(),
+            NodeStatus::Unknown => "Checking...".to_string(),
         }
     };
 
@@ -269,7 +269,7 @@ fn status_from_process(stop_reason: StopReason, crash_loop: bool) -> StatusUpdat
     let mut detail = "Offline".to_string();
     let (status, pid) = match process::detect_node() {
         Ok(Some(proc_info)) => {
-            detail = format!("Online (PID {})", proc_info.pid);
+            detail = "Online".to_string();
             (NodeStatus::Online, Some(proc_info.pid))
         }
         Ok(None) => (NodeStatus::Offline, None),
