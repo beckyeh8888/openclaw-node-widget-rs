@@ -27,7 +27,11 @@ InstallDir "${INSTALL_DIR}"
 RequestExecutionLevel admin
 
 ; --- UI ---
-!define MUI_ICON "..\assets\icon_online.ico"
+; CI generates icon_online.ico from PNG before running makensis.
+; If .ico exists, use it; otherwise NSIS uses its default icon.
+!if /FileExists "..\assets\icon_online.ico"
+  !define MUI_ICON "..\assets\icon_online.ico"
+!endif
 !define MUI_ABORTWARNING
 
 !insertmacro MUI_PAGE_WELCOME
