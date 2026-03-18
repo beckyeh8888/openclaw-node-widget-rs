@@ -28,7 +28,8 @@ jobs:
         run: |
           $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
           choco install nsis -y
-          makensis /DPRODUCT_VERSION=$version installer\installer.nsi
+          $env:PATH += ";C:\Program Files (x86)\NSIS"
+          & "C:\Program Files (x86)\NSIS\makensis.exe" /DPRODUCT_VERSION=$version installer\installer.nsi
           Move-Item installer\openclaw-node-widget-$version-setup.exe ${{ env.BINARY_NAME }}-windows-x64-setup.exe
       - uses: actions/upload-artifact@v4
         with:
