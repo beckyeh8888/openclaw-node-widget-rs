@@ -255,11 +255,13 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                     }
                 }
                 TrayCommand::ViewLogs => {
-                    let logs_dir = dirs::home_dir()
-                        .map(|h| h.join(".openclaw").join("logs"))
+                    let base = dirs::home_dir()
+                        .map(|h| h.join(".openclaw"))
                         .unwrap_or_default();
-                    info!("opening logs dir: {}", logs_dir.display());
-                    let _ = open::that(&logs_dir);
+                    let logs_dir = base.join("logs");
+                    let target = if logs_dir.exists() { logs_dir } else { base };
+                    info!("opening logs dir: {}", target.display());
+                    let _ = open::that(&target);
                 }
                 TrayCommand::Settings => {
                     if let Some(saved_config) = settings::run_settings_window(&config)? {
