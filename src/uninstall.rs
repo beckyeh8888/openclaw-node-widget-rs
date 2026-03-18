@@ -43,15 +43,82 @@ pub fn confirm_uninstall() -> Result<bool> {
 }
 
 pub fn perform_uninstall() -> Result<()> {
+    tracing::info!("performing uninstall...");
+
+    // Disable autostart (all platforms)
     let _ = autostart::set_autostart(false);
 
+    // Remove config directory (contains config.toml, device keys, etc.)
     if let Ok(dir) = config::app_dir() {
         if dir.exists() {
-            fs::remove_dir_all(&dir)?;
+            tracing::info!("removing config dir: {}", dir.display());
+            let _ = fs::remove_dir_all(&dir);
         }
     }
 
+    // Platform-specific cleanup
+    #[cfg(windows)]
+    perform_uninstall_windows();
+
+    #[cfg(target_os = "macos")]
+    perform_uninstall_macos();
+
+    #[cfg(target_os = "linux")]
+    perform_uninstall_linux();
+
     Ok(())
+}
+
+#[cfg(windows)]
+fn perform_uninstall_windows() {
+    // Remove installed exe directory
+    crate::install::remove_install_dir();
+
+    // Remove autostart registry entry (belt-and-suspenders, set_autostart should have done this)
+    let _ = remove_windows_autostart_registry();
+
+    // Remove Start Menu shortcut
+    crate::install::remove_start_menu_shortcut();
+}
+
+#[cfg(windows)]
+fn remove_windows_autostart_registry() -> Result<()> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let path = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    if let Ok(run_key) = hkcu.open_subkey_with_flags(path, winreg::enums::KEY_WRITE) {
+        let _ = run_key.delete_value("OpenClawNodeWidget");
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn perform_uninstall_macos() {
+    // Remove launchd plist (belt-and-suspenders)
+    let plist = dirs::home_dir()
+        .unwrap_or_default()
+        .join("Library")
+        .join("LaunchAgents")
+        .join("ai.openclaw.node-widget.plist");
+    if plist.exists() {
+        tracing::info!("removing launchd plist: {}", plist.display());
+        let _ = fs::remove_file(plist);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn perform_uninstall_linux() {
+    // Remove autostart .desktop file (belt-and-suspenders)
+    let desktop = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".config")
+        .join("autostart")
+        .join("openclaw-node-widget.desktop");
+    if desktop.exists() {
+        tracing::info!("removing desktop file: {}", desktop.display());
+        let _ = fs::remove_file(desktop);
+    }
 }
 
 struct UninstallDialog {
