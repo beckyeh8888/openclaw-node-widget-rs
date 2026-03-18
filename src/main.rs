@@ -125,6 +125,10 @@ async fn run() -> error::Result<i32> {
                 match wizard::run_setup_wizard(&config)? {
                     Some(saved_config) => {
                         config = saved_config;
+                        // First-run tutorial: show a helpful notification
+                        tray::send_notification_public(
+                            "Widget is running! Right-click the tray icon to see options.",
+                        );
                     }
                     None => return Ok(0),
                 }
