@@ -123,6 +123,17 @@ The widget supports multiple languages:
 
 The language is auto-detected from your system locale. You can override it in **Settings** or by setting `language` in the config file under `[widget]`.
 
+## 🔒 Remote Access with Tailscale
+
+For secure remote monitoring of your OpenClaw Node:
+
+1. Install [Tailscale](https://tailscale.com/download) on both machines
+2. Sign in to the same Tailscale account
+3. Use the Tailscale IP (100.x.x.x) as your Gateway URL in the Setup Wizard
+4. The widget auto-detects Tailscale peers during setup
+
+No port forwarding, no VPN configuration needed.
+
 ## ⚠️ Windows SmartScreen
 
 Windows may show a SmartScreen warning because the binary isn't code-signed yet. Click **"More info" → "Run anyway"** to proceed. This is safe — you can verify the source code yourself.
