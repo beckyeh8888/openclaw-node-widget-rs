@@ -491,13 +491,7 @@ fn handle_frame(
     match frame_type(frame) {
         Some("event") => {
             if let Some(event_name) = frame_name(frame) {
-                info!(event = event_name, "gateway event received");
-                if event_name == "presence" {
-                    // Log the raw presence payload for debugging
-                    if let Some(payload) = frame.get("payload") {
-                        info!(payload = %payload, "presence event payload");
-                    }
-                }
+                debug!(event = event_name, "gateway event received");
                 if let Some(event) = node_status_from_event(event_name, frame.get("payload")) {
                     let _ = tx.send(event);
                 }
@@ -527,22 +521,11 @@ fn handle_frame(
     }
 }
 
-fn node_status_from_event(event_name: &str, payload: Option<&Value>) -> Option<GatewayEvent> {
+fn node_status_from_event(event_name: &str, _payload: Option<&Value>) -> Option<GatewayEvent> {
     match event_name {
-        // presence event: payload could be array directly OR { presence: [...] } OR { clients: [...] }
-        "presence" => {
-            let payload = payload?;
-            let items = payload
-                .as_array()
-                .or_else(|| payload.get("presence").and_then(Value::as_array))
-                .or_else(|| payload.get("clients").and_then(Value::as_array))
-                .or_else(|| payload.get("items").and_then(Value::as_array))?;
-            let node_online = items.iter().any(|p| is_node_presence(p));
-            Some(GatewayEvent::NodeStatus {
-                online: node_online,
-                node_id: "node".to_string(),
-            })
-        }
+        // presence events are for WS clients, not paired nodes — ignore for node status
+        // node status is polled via node.list on ticker
+        "presence" => None,
         // tick event — just keep alive, no status change
         "tick" => None,
         // shutdown — gateway going down
@@ -551,13 +534,7 @@ fn node_status_from_event(event_name: &str, payload: Option<&Value>) -> Option<G
     }
 }
 
-fn is_node_presence(p: &Value) -> bool {
-    let host = p.get("host").and_then(Value::as_str).unwrap_or_default();
-    let mode = p.get("mode").and_then(Value::as_str).unwrap_or_default();
-    let reason = p.get("reason").and_then(Value::as_str).unwrap_or_default();
-    // Node is online if: mode=node OR host=node-host, AND not disconnected
-    (mode == "node" || host == "node-host") && reason != "disconnect"
-}
+// is_node_presence removed — node status now determined via node.list API only
 
 fn node_status_from_node_list(payload: Option<&Value>) -> Option<GatewayEvent> {
     let payload = payload?;
