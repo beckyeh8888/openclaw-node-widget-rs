@@ -174,14 +174,20 @@ impl TrayState {
         detail: &str,
         _pid: Option<i32>,
         crash_loop: bool,
-        stop_reason: StopReason,
+        _stop_reason: StopReason,
     ) -> Result<()> {
         let status_text = if crash_loop {
-            "Crash Loop".to_string()
-        } else if status == NodeStatus::Offline && stop_reason == StopReason::Manual {
-            "Stopped".to_string()
+            t("status_crash_loop").to_string()
         } else {
-            detail.to_string()
+            match status {
+                NodeStatus::Online => t("status_online").to_string(),
+                NodeStatus::Offline => t("status_offline").to_string(),
+                NodeStatus::Stopped => t("status_stopped").to_string(),
+                NodeStatus::GatewayDown => t("status_gateway_down").to_string(),
+                NodeStatus::AuthFailed => t("status_auth_failed").to_string(),
+                NodeStatus::Reconnecting => t("status_reconnecting").to_string(),
+                NodeStatus::Unknown => detail.to_string(),
+            }
         };
 
         let label = format!("Node: {status_text}");
@@ -190,11 +196,16 @@ impl TrayState {
         self.tray
             .set_icon(Some(icon_for_status(status)?))
             .map_err(|e| AppError::Tray(e.to_string()))?;
-        let tooltip = match status {
-            NodeStatus::Online => format!("OpenClaw Node: Online\nGateway: {}", self.gateway_status),
-            NodeStatus::Offline => format!("OpenClaw Node: Offline\nGateway: {}", self.gateway_status),
-            NodeStatus::Unknown => format!("OpenClaw Node: Checking...\nGateway: {}", self.gateway_status),
+        let tooltip_status = match status {
+            NodeStatus::Online => t("status_online"),
+            NodeStatus::Offline => t("status_offline"),
+            NodeStatus::Stopped => t("status_stopped"),
+            NodeStatus::GatewayDown => t("status_gateway_down"),
+            NodeStatus::AuthFailed => t("status_auth_failed"),
+            NodeStatus::Reconnecting => t("status_reconnecting"),
+            NodeStatus::Unknown => t("status_checking"),
         };
+        let tooltip = format!("OpenClaw Node: {tooltip_status}\nGateway: {}", self.gateway_status);
         self.tray
             .set_tooltip(Some(tooltip))
             .map_err(|e| AppError::Tray(e.to_string()))?;
@@ -336,10 +347,10 @@ impl TrayState {
         }
 
         if let Some(previous) = self.last_status {
-            if previous == NodeStatus::Online && status == NodeStatus::Offline {
+            if previous == NodeStatus::Online && status != NodeStatus::Online {
                 send_notification("OpenClaw Node went offline");
             }
-            if previous == NodeStatus::Offline && status == NodeStatus::Online {
+            if previous != NodeStatus::Online && status == NodeStatus::Online {
                 send_notification("OpenClaw Node is online");
             }
         }
@@ -359,8 +370,13 @@ impl TrayState {
 fn icon_for_status(status: NodeStatus) -> Result<Icon> {
     let bytes = match status {
         NodeStatus::Online => include_bytes!("../assets/icon_online.png").as_slice(),
-        NodeStatus::Offline => include_bytes!("../assets/icon_offline.png").as_slice(),
-        NodeStatus::Unknown => include_bytes!("../assets/icon_unknown.png").as_slice(),
+        NodeStatus::Offline | NodeStatus::Stopped | NodeStatus::GatewayDown | NodeStatus::AuthFailed => {
+            include_bytes!("../assets/icon_offline.png").as_slice()
+        }
+        // Reconnecting/Unknown use the yellow/unknown icon
+        NodeStatus::Reconnecting | NodeStatus::Unknown => {
+            include_bytes!("../assets/icon_unknown.png").as_slice()
+        }
     };
 
     icon_from_png(bytes)

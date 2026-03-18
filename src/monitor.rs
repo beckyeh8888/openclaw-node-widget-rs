@@ -10,9 +10,22 @@ use crate::{config::Config, gateway::GatewayEvent, process};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeStatus {
-    Online,
-    Offline,
+    Online,          // Gateway connected + node online
+    Offline,         // Gateway connected + node offline
+    Stopped,         // Node process not running (local detection)
+    GatewayDown,     // Cannot connect to gateway WebSocket
+    AuthFailed,      // Gateway rejected auth (bad token, device not paired)
+    Reconnecting,    // Currently in reconnect backoff
+    Unknown,         // Initial state
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GatewayStatus {
     Unknown,
+    Connected,
+    Down,
+    AuthFailed,
+    Reconnecting,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,15 +73,16 @@ pub fn spawn_monitor(
         let mut gateway_connected = false;
         let mut gateway_online: Option<bool> = None;
         let mut gateway_error: Option<String> = None;
+        let mut gateway_status = GatewayStatus::Unknown;
 
         loop {
             tokio::select! {
                 _ = ticker.tick() => {
-                    let status = if gateway_configured && gateway_connected {
-                        status_from_gateway(gateway_online, gateway_error.as_deref(), crash_loop, stop_reason)
+                    let status = if gateway_configured {
+                        status_from_gateway(gateway_online, gateway_error.as_deref(), gateway_connected, gateway_status, crash_loop, stop_reason)
                     } else {
                         let status = status_from_process(stop_reason, crash_loop);
-                        if status.node_status == NodeStatus::Offline {
+                        if matches!(status.node_status, NodeStatus::Offline | NodeStatus::Stopped) {
                             offline_count = offline_count.saturating_add(1);
                             if offline_since.is_none() {
                                 offline_since = Some(Instant::now());
@@ -143,31 +157,34 @@ pub fn spawn_monitor(
                     match event {
                         GatewayEvent::Connected { .. } => {
                             gateway_connected = true;
+                            gateway_status = GatewayStatus::Connected;
                             gateway_error = None;
                         }
                         GatewayEvent::Disconnected(reason) => {
                             gateway_connected = false;
                             gateway_online = None;
+                            gateway_status = GatewayStatus::Reconnecting;
                             gateway_error = Some(reason);
                         }
                         GatewayEvent::NodeStatus { online, .. } => {
                             gateway_connected = true;
+                            gateway_status = GatewayStatus::Connected;
                             gateway_online = Some(online);
                             gateway_error = None;
 
-                            let _ = status_tx.send(status_from_gateway(gateway_online, None, crash_loop, stop_reason));
+                            let _ = status_tx.send(status_from_gateway(gateway_online, None, gateway_connected, gateway_status, crash_loop, stop_reason));
                         }
                         GatewayEvent::Error(message) => {
                             gateway_connected = false;
                             gateway_online = None;
+                            // Distinguish auth failures from connection failures
+                            if message.to_ascii_lowercase().contains("auth") || message.to_ascii_lowercase().contains("token") {
+                                gateway_status = GatewayStatus::AuthFailed;
+                            } else {
+                                gateway_status = GatewayStatus::Down;
+                            }
                             gateway_error = Some(message.clone());
-                            let _ = status_tx.send(StatusUpdate {
-                                node_status: NodeStatus::Unknown,
-                                pid: None,
-                                detail: format!("Gateway error: {message}"),
-                                crash_loop,
-                                stop_reason,
-                            });
+                            let _ = status_tx.send(status_from_gateway(gateway_online, gateway_error.as_deref(), gateway_connected, gateway_status, crash_loop, stop_reason));
                         }
                     }
                 }
@@ -237,13 +254,24 @@ async fn recv_gateway_event(
 fn status_from_gateway(
     gateway_online: Option<bool>,
     gateway_error: Option<&str>,
+    gateway_connected: bool,
+    gateway_status: GatewayStatus,
     crash_loop: bool,
     stop_reason: StopReason,
 ) -> StatusUpdate {
-    let status = match gateway_online {
-        Some(true) => NodeStatus::Online,
-        Some(false) => NodeStatus::Offline,
-        None => NodeStatus::Unknown,
+    let status = if !gateway_connected {
+        match gateway_status {
+            GatewayStatus::AuthFailed => NodeStatus::AuthFailed,
+            GatewayStatus::Reconnecting => NodeStatus::Reconnecting,
+            GatewayStatus::Down => NodeStatus::GatewayDown,
+            _ => NodeStatus::Unknown,
+        }
+    } else {
+        match gateway_online {
+            Some(true) => NodeStatus::Online,
+            Some(false) => NodeStatus::Offline,
+            None => NodeStatus::Unknown,
+        }
     };
 
     let detail = if let Some(error) = gateway_error {
@@ -252,6 +280,10 @@ fn status_from_gateway(
         match status {
             NodeStatus::Online => "Online".to_string(),
             NodeStatus::Offline => "Offline".to_string(),
+            NodeStatus::GatewayDown => "Gateway down".to_string(),
+            NodeStatus::AuthFailed => "Auth failed".to_string(),
+            NodeStatus::Reconnecting => "Reconnecting...".to_string(),
+            NodeStatus::Stopped => "Stopped".to_string(),
             NodeStatus::Unknown => "Checking...".to_string(),
         }
     };
@@ -272,7 +304,13 @@ fn status_from_process(stop_reason: StopReason, crash_loop: bool) -> StatusUpdat
             detail = "Online".to_string();
             (NodeStatus::Online, Some(proc_info.pid))
         }
-        Ok(None) => (NodeStatus::Offline, None),
+        Ok(None) => {
+            if stop_reason == StopReason::Manual {
+                (NodeStatus::Stopped, None)
+            } else {
+                (NodeStatus::Offline, None)
+            }
+        }
         Err(err) => {
             warn!("process detection failed: {err}");
             detail = format!("Error: {err}");
@@ -282,7 +320,7 @@ fn status_from_process(stop_reason: StopReason, crash_loop: bool) -> StatusUpdat
 
     if crash_loop {
         detail = "Node crash loop detected - auto-restart paused".to_string();
-    } else if status == NodeStatus::Offline && stop_reason == StopReason::Manual {
+    } else if status == NodeStatus::Stopped {
         detail = "Node stopped (manual)".to_string();
     }
 

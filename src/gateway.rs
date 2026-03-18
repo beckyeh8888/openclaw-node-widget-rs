@@ -253,9 +253,13 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                         .map_err(|e| ConnectError::Retryable(format!("pong failed: {e}")))?;
                 }
                 Message::Close(close_frame) => {
-                    let reason = close_frame
-                        .map(|f| f.reason.to_string())
-                        .unwrap_or_else(|| "gateway closed".to_string());
+                    let (code, reason) = match &close_frame {
+                        Some(f) => (f.code.into(), f.reason.to_string()),
+                        None => (0u16, "gateway closed".to_string()),
+                    };
+                    if code == 4001 || code == 4003 {
+                        return Err(ConnectError::Fatal(format!("gateway auth rejected (code={code}): {reason}")));
+                    }
                     return Err(ConnectError::Retryable(reason));
                 }
                 _ => {}
@@ -398,6 +402,11 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                     None => (0u16, "no close frame".to_string()),
                 };
                 info!(code, reason = %reason, "gateway sent close frame after connect");
+                if code == 4001 || code == 4003 {
+                    return Err(ConnectError::Fatal(format!(
+                        "gateway auth rejected (code={code}): {reason}"
+                    )));
+                }
                 return Err(ConnectError::Retryable(format!(
                     "gateway closed (code={code}): {reason}"
                 )));
