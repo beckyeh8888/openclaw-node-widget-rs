@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0] - 2026-03-18
+
+### Added
+- **GUI Settings window** — egui-based settings (Gateway URL/token, intervals, toggles)
+- **Auto-update check** — startup + every 6h via GitHub Releases API (reqwest/rustls)
+- **Multi-language** — English, 繁體中文, 简体中文 with auto-detection + manual selector
+- **CJK font support** — loads system fonts for Chinese/Japanese in egui windows
+- **Connection details** — tray shows Gateway version, Node name, uptime
+- **Open Gateway UI** — opens browser to Gateway HTTP URL
+- **View Logs** — opens OpenClaw log directory in file explorer
+- **Check for Updates** — manual check from tray menu
+- **Uninstall** — confirmation dialog, removes autostart + config
+- **Windows native toast** — custom AUMID registration, shows "OpenClaw Node Widget"
+
+### Changed
+- Settings now opens GUI window instead of config.toml in editor
+- All UI text internationalized via i18n module
+- Notification sound toggle in config
+
 ## [0.3.0] - 2026-03-18
 
 ### Added

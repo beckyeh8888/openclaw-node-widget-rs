@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use serde::Deserialize;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::i18n::t;
 
