@@ -377,27 +377,13 @@ fn send_notification(body: &str) {
 
 #[cfg(windows)]
 fn send_notification_windows(body: &str) {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
+    use winrt_notification::{Toast, Duration as ToastDuration};
 
-    // Escape single quotes for PowerShell
-    let escaped = body.replace('\'', "''");
-    let script = format!(
-        r#"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null;
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null;
-$xml = [Windows.Data.Xml.Dom.XmlDocument]::new();
-$xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text>OpenClaw Node Widget</text><text>{escaped}</text></binding></visual><audio silent="false"/></toast>');
-$toast = [Windows.UI.Notifications.ToastNotification]::new($xml);
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('OpenClaw.NodeWidget').Show($toast)"#
-    );
-
-    match Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
-        .spawn()
+    match Toast::new(Toast::POWERSHELL_APP_ID)
+        .title("OpenClaw Node Widget")
+        .text1(body)
+        .duration(ToastDuration::Short)
+        .show()
     {
         Ok(_) => tracing::debug!("windows toast sent: {body}"),
         Err(e) => {
