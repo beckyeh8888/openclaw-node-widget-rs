@@ -81,6 +81,9 @@ jobs:
           cp target/release/openclaw-node-widget-rs dist/${{ env.BINARY_NAME }}
           chmod +x dist/${{ env.BINARY_NAME }}
           cd dist && tar czf ../${{ env.BINARY_NAME }}-linux-x64.tar.gz ${{ env.BINARY_NAME }}
+      - name: Get version
+        id: version
+        run: echo "version=$(grep ^version Cargo.toml | head -1 | sed 's/.*= "//;s/"//')" >> $GITHUB_OUTPUT
       - name: Create deb package
         run: |
           mkdir -p deb/DEBIAN
@@ -88,9 +91,9 @@ jobs:
           mkdir -p deb/usr/share/applications
           cp target/release/openclaw-node-widget-rs deb/usr/bin/${{ env.BINARY_NAME }}
           chmod +x deb/usr/bin/${{ env.BINARY_NAME }}
-          cat > deb/DEBIAN/control << 'EOF'
+          cat > deb/DEBIAN/control << EOF
           Package: openclaw-node-widget
-          Version: 0.1.0
+          Version: ${{ steps.version.outputs.version }}
           Section: utils
           Priority: optional
           Architecture: amd64
