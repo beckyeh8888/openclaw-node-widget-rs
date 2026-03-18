@@ -172,25 +172,35 @@ async fn download_and_install_windows(tag: &str) -> Result<(), String> {
         return Err("no .exe found in zip archive".to_string());
     }
 
-    // Replace current exe: rename current to .bak, write new exe
-    let current_exe =
-        std::env::current_exe().map_err(|e| format!("cannot resolve current exe: {e}"))?;
-    let bak_path = current_exe.with_extension("exe.bak");
+    // Install to the proper install directory
+    let install_dir = crate::install::windows_install_dir()
+        .map_err(|e| format!("cannot resolve install dir: {e}"))?;
+    let install_exe = crate::install::windows_install_exe()
+        .map_err(|e| format!("cannot resolve install exe: {e}"))?;
 
-    // Remove old backup if it exists
-    let _ = std::fs::remove_file(&bak_path);
+    std::fs::create_dir_all(&install_dir)
+        .map_err(|e| format!("failed to create install dir: {e}"))?;
 
-    std::fs::rename(&current_exe, &bak_path)
-        .map_err(|e| format!("failed to rename current exe to .bak: {e}"))?;
+    // Write the new exe to install path (backup old if present)
+    let bak_path = install_exe.with_extension("exe.bak");
+    if install_exe.exists() {
+        let _ = std::fs::remove_file(&bak_path);
+        let _ = std::fs::rename(&install_exe, &bak_path);
+    }
 
-    std::fs::write(&current_exe, &exe_data)
+    std::fs::write(&install_exe, &exe_data)
         .map_err(|e| format!("failed to write new exe: {e}"))?;
 
-    tracing::info!("update installed to {}", current_exe.display());
+    tracing::info!("update installed to {}", install_exe.display());
 
-    // Auto-restart: spawn the new exe and exit current process
-    tracing::info!("auto-restarting widget...");
-    let _ = std::process::Command::new(&current_exe).spawn();
+    // Update autostart registry and Start Menu shortcut to point to install path
+    if let Err(e) = crate::install::perform_install() {
+        tracing::warn!("post-install setup: {e}");
+    }
+
+    // Auto-restart: spawn the installed exe and exit current process
+    tracing::info!("auto-restarting widget from install path...");
+    let _ = std::process::Command::new(&install_exe).spawn();
     std::process::exit(0);
 }
 

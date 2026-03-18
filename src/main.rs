@@ -6,6 +6,7 @@ mod config;
 mod error;
 mod gateway;
 mod i18n;
+mod install;
 mod lock;
 mod monitor;
 mod process;
@@ -36,6 +37,9 @@ struct Cli {
     gateway: Option<String>,
     #[arg(long)]
     token: Option<String>,
+    /// Install the widget to the system install path (Windows)
+    #[arg(long)]
+    install: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -64,6 +68,28 @@ async fn main() {
 
 async fn run() -> error::Result<i32> {
     let cli = Cli::parse();
+
+    // Handle --install flag (Windows: copy exe, set autostart, create shortcut)
+    #[cfg(windows)]
+    if cli.install {
+        match install::perform_install() {
+            Ok(()) => {
+                tray::send_notification_public("OpenClaw Node Widget installed successfully!");
+                // Launch from install path and exit
+                install::launch_installed_and_exit();
+            }
+            Err(e) => {
+                error!("install failed: {e}");
+                return Ok(1);
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    if cli.install {
+        println!("--install is only supported on Windows. On other platforms, just run the binary directly.");
+        return Ok(0);
+    }
+
     let command = cli.command.unwrap_or(Commands::Run);
     let config_exists = config_path()?.exists();
 

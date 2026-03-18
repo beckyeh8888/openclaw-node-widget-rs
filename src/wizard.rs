@@ -23,6 +23,19 @@ enum WizardStep {
     Complete,
 }
 
+/// Whether we should show the "Install to system?" step in the wizard.
+/// Only on Windows when not already running from the install directory.
+fn should_offer_install() -> bool {
+    #[cfg(windows)]
+    {
+        !crate::install::is_running_from_install_dir()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[derive(Default)]
 struct WizardSharedState {
     saved_config: Option<Config>,
@@ -78,6 +91,7 @@ struct SetupWizardApp {
     token: String,
     node_command: String,
     auto_start: bool,
+    install_to_system: bool,
     finish_error: Option<String>,
     dark_mode_applied: bool,
 }
@@ -100,6 +114,7 @@ impl SetupWizardApp {
             } else {
                 true
             },
+            install_to_system: should_offer_install(),
             finish_error: None,
             dark_mode_applied: false,
             base_config,
@@ -253,6 +268,15 @@ impl SetupWizardApp {
             return;
         }
 
+        // Perform system install if requested (Windows only)
+        #[cfg(windows)]
+        if self.install_to_system {
+            if let Err(err) = crate::install::perform_install() {
+                self.finish_error = Some(format!("Install failed: {err}"));
+                return;
+            }
+        }
+
         match self.shared.lock() {
             Ok(mut state) => {
                 state.saved_config = Some(config.clone());
@@ -394,6 +418,15 @@ impl eframe::App for SetupWizardApp {
                 WizardStep::Autostart => {
                     ui.heading("Autostart");
                     ui.checkbox(&mut self.auto_start, "Start widget on login");
+
+                    if should_offer_install() {
+                        ui.add_space(12.0);
+                        ui.checkbox(
+                            &mut self.install_to_system,
+                            "Install to system (Recommended)",
+                        );
+                        ui.label("Installs to a standard location, adds Start Menu shortcut.");
+                    }
 
                     if let Some(err) = &self.finish_error {
                         ui.add_space(8.0);
