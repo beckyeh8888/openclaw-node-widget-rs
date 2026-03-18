@@ -268,12 +268,25 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
 
     let token = client.token.clone().unwrap_or_default();
     let signed_at_ms = now_ms();
-    let client_id = Uuid::new_v4().to_string();
+    let instance_id = Uuid::new_v4().to_string();
     let platform = platform_name();
-    // Device signing reserved for future device-paired auth
-    // let payload = build_signature_payload_v3(&SignatureParams { ... });
-    // let signature = sign_payload(&client.private_key, &payload);
     let connect_id = Uuid::new_v4().to_string();
+
+    let role = "operator";
+    let scopes = "operator.read,operator.write";
+    let payload = build_signature_payload_v3(&SignatureParams {
+        device_id: &client.device_id,
+        client_id: "gateway-client",
+        client_mode: "backend",
+        role,
+        scopes,
+        signed_at_ms,
+        token: &token,
+        nonce,
+        platform: &platform,
+        device_family: "desktop",
+    });
+    let signature = sign_payload(&client.private_key, &payload);
 
     let connect_frame = json!({
         "type": "req",
@@ -288,9 +301,16 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                 "platform": platform,
                 "deviceFamily": "desktop",
                 "mode": "backend",
-                "instanceId": client_id
+                "instanceId": instance_id
             },
-            "role": "operator",
+            "device": {
+                "id": client.device_id,
+                "publicKey": client.public_key_pem,
+                "signature": signature,
+                "signedAt": signed_at_ms,
+                "nonce": nonce
+            },
+            "role": role,
             "scopes": ["operator.read", "operator.write"],
             "caps": [],
             "auth": { "token": token },
