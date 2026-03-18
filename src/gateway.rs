@@ -403,28 +403,9 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
         }
     };
 
-    // Parse node status from hello-ok snapshot
-    let hello_ok = &hello_ok_frame;
-    if let Some(snapshot_presence) = hello_ok
-        .get("payload")
-        .and_then(|p| p.get("snapshot"))
-        .and_then(|s| s.get("presence"))
-        .and_then(Value::as_array)
-    {
-        let node_online = snapshot_presence.iter().any(|p| {
-            let client_id = p.get("host").and_then(Value::as_str).unwrap_or_default();
-            let mode = p.get("mode").and_then(Value::as_str).unwrap_or_default();
-            let reason = p.get("reason").and_then(Value::as_str).unwrap_or_default();
-            // Node presence: mode=node OR client_id contains node-host, and not disconnected
-            (mode == "node" || client_id == "node-host") && reason != "disconnect"
-        });
-        info!(node_online, "parsed node status from hello-ok snapshot");
-        let _ = client.tx.send(GatewayEvent::NodeStatus {
-            online: node_online,
-            node_id: "node".to_string(),
-        });
-    }
-
+    // Node status is determined by node.list API polling (not snapshot presence)
+    // The first node.list request fires immediately from the ticker below
+    info!("gateway connected, node status will be polled via node.list");
     let _ = client.tx.send(GatewayEvent::Connected);
 
     let mut presence_ticker = tokio::time::interval(Duration::from_secs(30));
