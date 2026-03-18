@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0] - 2026-03-19
+
+### Added
+- **Tailscale integration** — Setup Wizard auto-detects Tailscale peers, auto-fills Gateway URL
+- **Tailscale status** — tray shows Tailscale connected/disconnected, warns if VPN drops
+- **Connection latency** — WebSocket ping/pong monitoring, shows latency in tray + diagnostics
+- **README Tailscale guide** — step-by-step remote access setup instructions
+
 ## [0.6.0] - 2026-03-19
 
 ### Added
