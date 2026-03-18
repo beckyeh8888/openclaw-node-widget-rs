@@ -377,6 +377,7 @@ fn send_notification(body: &str) {
 
 #[cfg(windows)]
 fn send_notification_windows(body: &str) {
+    use std::os::windows::process::CommandExt;
     use std::process::Command;
 
     // Escape single quotes for PowerShell
