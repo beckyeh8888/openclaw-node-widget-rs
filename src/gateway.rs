@@ -487,9 +487,9 @@ fn handle_frame(
             let ok = frame.get("ok").and_then(Value::as_bool).unwrap_or(false);
             let id = frame.get("id").and_then(Value::as_str);
             info!(ok, ?id, ?pending_presence, "response frame received");
-            if ok {
-                if id.is_some() && id == pending_presence {
-                    info!("system-presence response matched");
+            if id.is_some() && id == pending_presence {
+                if ok {
+                    info!("system-presence response OK");
                     if let Some(payload) = frame.get("payload") {
                         info!(payload = %payload, "system-presence payload");
                     }
@@ -497,7 +497,9 @@ fn handle_frame(
                         let _ = tx.send(event);
                     }
                 } else {
-                    info!("response id mismatch, ignoring");
+                    // Log the error
+                    let error = frame.get("error").or_else(|| frame.get("payload"));
+                    info!(?error, "system-presence request REJECTED");
                 }
             }
         }
