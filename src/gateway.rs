@@ -38,6 +38,13 @@ pub struct GatewayClient {
     pub tx: mpsc::UnboundedSender<GatewayEvent>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct GatewayStats {
+    pub active_sessions: u32,
+    pub total_errors_24h: u32,
+    pub last_agent_activity: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub enum GatewayEvent {
     Connected {
@@ -47,6 +54,7 @@ pub enum GatewayEvent {
     NodeStatus {
         online: bool,
         node_name: Option<String>,
+        stats: GatewayStats,
     },
     Error(String),
 }
@@ -439,6 +447,24 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
     info!(?gateway_version, "gateway connected, node status will be polled via node.list");
     let _ = client.tx.send(GatewayEvent::Connected { gateway_version });
 
+    // Attempt to subscribe to gateway events (best-effort, may not be supported)
+    let subscribe_id = Uuid::new_v4().to_string();
+    let subscribe_frame = json!({
+        "type": "req",
+        "id": subscribe_id,
+        "method": "events.subscribe",
+        "params": {
+            "types": ["session.start", "session.end", "agent.error"]
+        }
+    });
+    info!("sending events.subscribe request (best-effort)");
+    if let Err(e) = write
+        .send(Message::Text(subscribe_frame.to_string().into()))
+        .await
+    {
+        info!("events.subscribe send failed (non-fatal): {e}");
+    }
+
     let mut presence_ticker = tokio::time::interval(Duration::from_secs(30));
     let mut pending_presence: Option<String> = None;
 
@@ -542,6 +568,11 @@ fn node_status_from_event(event_name: &str, _payload: Option<&Value>) -> Option<
         "tick" => None,
         // shutdown — gateway going down
         "shutdown" => Some(GatewayEvent::Disconnected("gateway shutdown".to_string())),
+        // session/agent events — logged for future use, stats updated via node.list polling
+        "session.start" | "session.end" | "agent.error" => {
+            debug!(event = event_name, "gateway subscription event received");
+            None
+        }
         _ => None,
     }
 }
@@ -571,10 +602,59 @@ fn node_status_from_node_list(payload: Option<&Value>) -> Option<GatewayEvent> {
         .and_then(|n| n.get("displayName").and_then(Value::as_str))
         .map(String::from);
 
+    // Build stats from node.list data
+    let active_sessions = items
+        .iter()
+        .filter(|n| n.get("connected").and_then(Value::as_bool).unwrap_or(false))
+        .filter_map(|n| n.get("activeSessions").and_then(Value::as_u64))
+        .sum::<u64>() as u32;
+
+    let total_errors_24h = items
+        .iter()
+        .filter_map(|n| n.get("errors24h").and_then(Value::as_u64))
+        .sum::<u64>() as u32;
+
+    let last_agent_activity = items
+        .iter()
+        .filter(|n| n.get("connected").and_then(Value::as_bool).unwrap_or(false))
+        .filter_map(|n| {
+            let name = n.get("displayName").and_then(Value::as_str).unwrap_or("node");
+            let last_active = n.get("lastActiveAt").and_then(Value::as_str)?;
+            Some(format_agent_activity(name, last_active))
+        })
+        .next();
+
+    let stats = GatewayStats {
+        active_sessions,
+        total_errors_24h,
+        last_agent_activity,
+    };
+
     Some(GatewayEvent::NodeStatus {
         online: node_online,
         node_name,
+        stats,
     })
+}
+
+fn format_agent_activity(name: &str, last_active_str: &str) -> String {
+    // Try to parse ISO 8601 timestamp and compute "X ago"
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(last_active_str) {
+        let now = chrono::Utc::now();
+        let duration = now.signed_duration_since(dt);
+        let ago = if duration.num_seconds() < 60 {
+            "just now".to_string()
+        } else if duration.num_minutes() < 60 {
+            format!("{}m ago", duration.num_minutes())
+        } else if duration.num_hours() < 24 {
+            format!("{}h ago", duration.num_hours())
+        } else {
+            format!("{}d ago", duration.num_days())
+        };
+        format!("{name}: {ago}")
+    } else {
+        format!("{name}: {last_active_str}")
+    }
 }
 
 fn parse_frame(text: &str) -> Result<Value, ConnectError> {

@@ -8,7 +8,7 @@ use tray_icon::{
 
 use crate::{
     error::{AppError, Result},
-    gateway::GatewayEvent,
+    gateway::{GatewayEvent, GatewayStats},
     i18n::t,
     monitor::{NodeStatus, StopReason},
 };
@@ -67,6 +67,10 @@ pub struct TrayState {
     connected_at: Option<std::time::Instant>,
     last_error: Option<String>,
     last_connected: Option<chrono::DateTime<chrono::Local>>,
+    stats_sessions_item: MenuItem,
+    stats_errors_item: MenuItem,
+    stats_activity_item: MenuItem,
+    gateway_stats: GatewayStats,
 }
 
 impl TrayState {
@@ -86,6 +90,9 @@ impl TrayState {
         let conn_detail_item = MenuItem::new(format!("{}{}", t("connection_details"), t("na")), false, None);
         let last_error_item = MenuItem::new(format!("{}{}", t("last_error_label"), t("none")), false, None);
         let last_connected_item = MenuItem::new(format!("{}{}", t("last_connected_label"), t("na")), false, None);
+        let stats_sessions_item = MenuItem::new(format!("{}{}", t("stats_sessions"), "0"), false, None);
+        let stats_errors_item = MenuItem::new(format!("{}{}", t("stats_errors_24h"), "0"), false, None);
+        let stats_activity_item = MenuItem::new(format!("{}{}", t("stats_last_activity"), t("na")), false, None);
         let refresh_item = MenuItem::new(t("refresh"), true, None);
         let restart_item = MenuItem::new(t("restart_node"), true, None);
         let stop_item = MenuItem::new(t("stop_node"), true, None);
@@ -105,6 +112,9 @@ impl TrayState {
         a(&conn_detail_item)?;
         a(&last_error_item)?;
         a(&last_connected_item)?;
+        a(&stats_sessions_item)?;
+        a(&stats_errors_item)?;
+        a(&stats_activity_item)?;
         a(&sep())?;
         a(&refresh_item)?;
         a(&restart_item)?;
@@ -183,6 +193,10 @@ impl TrayState {
             connected_at: None,
             last_error: None,
             last_connected: None,
+            stats_sessions_item,
+            stats_errors_item,
+            stats_activity_item,
+            gateway_stats: GatewayStats::default(),
         })
     }
 
@@ -258,7 +272,7 @@ impl TrayState {
                 self.connected_at = None;
                 self.last_error = Some(truncate_error(reason));
             }
-            GatewayEvent::NodeStatus { online, node_name } => {
+            GatewayEvent::NodeStatus { online, node_name, stats } => {
                 self.gateway_status = if *online {
                     t("gateway_connected").to_string()
                 } else {
@@ -267,6 +281,8 @@ impl TrayState {
                 if node_name.is_some() {
                     self.node_name = node_name.clone();
                 }
+                self.gateway_stats = stats.clone();
+                self.update_stats_items();
             }
             GatewayEvent::Error(message) => {
                 self.gateway_status = format!("Error: {message}");
@@ -312,6 +328,20 @@ impl TrayState {
         };
         self.last_connected_item
             .set_text(&format!("{}{}", t("last_connected_label"), connected_text));
+    }
+
+    fn update_stats_items(&mut self) {
+        self.stats_sessions_item
+            .set_text(&format!("{}{}", t("stats_sessions"), self.gateway_stats.active_sessions));
+        self.stats_errors_item
+            .set_text(&format!("{}{}", t("stats_errors_24h"), self.gateway_stats.total_errors_24h));
+        let activity = self
+            .gateway_stats
+            .last_agent_activity
+            .as_deref()
+            .unwrap_or(t("na"));
+        self.stats_activity_item
+            .set_text(&format!("{}{}", t("stats_last_activity"), activity));
     }
 
     pub fn collect_diagnostics(&self, gateway_url: Option<&str>, gateway_token: Option<&str>) -> String {
