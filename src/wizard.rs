@@ -11,7 +11,9 @@ use crate::{
     autostart,
     config::Config,
     error::{AppError, Result},
+    i18n::t,
     setup::{find_node_script, parse_node_script, ScriptDetection},
+    tailscale::TailscalePeer,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +96,9 @@ struct SetupWizardApp {
     install_to_system: bool,
     finish_error: Option<String>,
     dark_mode_applied: bool,
+    tailscale_peers: Vec<TailscalePeer>,
+    tailscale_detected: bool,
+    selected_peer_index: Option<usize>,
 }
 
 impl SetupWizardApp {
@@ -117,6 +122,9 @@ impl SetupWizardApp {
             install_to_system: should_offer_install(),
             finish_error: None,
             dark_mode_applied: false,
+            tailscale_peers: Vec::new(),
+            tailscale_detected: false,
+            selected_peer_index: None,
             base_config,
             shared,
         };
@@ -136,10 +144,18 @@ impl SetupWizardApp {
         app
     }
 
+    fn detect_tailscale(&mut self) {
+        let peers = crate::tailscale::detect_peers();
+        self.tailscale_detected = !peers.is_empty();
+        self.tailscale_peers = peers;
+        self.selected_peer_index = None;
+    }
+
     fn refresh_detection(&mut self) {
         self.detect_error = None;
         self.script_path = find_node_script();
         self.detection = None;
+        self.detect_tailscale();
 
         if let Some(path) = &self.script_path {
             match parse_node_script(path) {
@@ -405,14 +421,50 @@ impl eframe::App for SetupWizardApp {
                     }
                 }
                 WizardStep::Gateway => {
-                    ui.heading("Gateway Configuration");
-                    ui.label("Gateway Host");
+                    ui.heading(t("gateway_config"));
+
+                    // Tailscale peer selection
+                    if self.tailscale_detected {
+                        ui.add_space(4.0);
+                        ui.label(t("tailscale_peers_found"));
+
+                        let peers = self.tailscale_peers.clone();
+                        let mut selected = self.selected_peer_index;
+
+                        for (i, peer) in peers.iter().enumerate() {
+                            let label = format!("{} ({})", peer.hostname, peer.ip);
+                            let is_selected = selected == Some(i);
+                            if ui.selectable_label(is_selected, &label).clicked() {
+                                selected = Some(i);
+                                self.host = peer.ip.clone();
+                                self.port = "18789".to_string();
+                            }
+                        }
+
+                        if ui.selectable_label(selected.is_none(), t("tailscale_manual_entry")).clicked() {
+                            selected = None;
+                        }
+                        self.selected_peer_index = selected;
+
+                        ui.add_space(4.0);
+                        ui.separator();
+                    } else {
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(t("tailscale_hint"))
+                                .color(egui::Color32::from_rgb(150, 150, 150))
+                                .italics(),
+                        );
+                    }
+
+                    ui.add_space(4.0);
+                    ui.label(t("gateway_host"));
                     ui.text_edit_singleline(&mut self.host);
-                    ui.label("Gateway Port");
+                    ui.label(t("gateway_port"));
                     ui.text_edit_singleline(&mut self.port);
-                    ui.label("Gateway Token (optional)");
+                    ui.label(t("gateway_token_optional"));
                     ui.text_edit_singleline(&mut self.token);
-                    ui.label("Node command");
+                    ui.label(t("node_command"));
                     ui.text_edit_singleline(&mut self.node_command);
                 }
                 WizardStep::Autostart => {

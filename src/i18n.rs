@@ -275,6 +275,20 @@ fn en<'a>(key: &'a str) -> &'a str {
         "minutes_short" => "m",
         "just_now" => "Just now",
 
+        // Tailscale
+        "tailscale_peers_found" => "Tailscale peers detected — select a Gateway host:",
+        "tailscale_manual_entry" => "Manual entry",
+        "tailscale_hint" => "Tip: Install Tailscale for secure remote access to your Gateway",
+        "tailscale_connected" => "Tailscale: Connected",
+        "tailscale_disconnected" => "Tailscale: Disconnected",
+        "tailscale_not_installed" => "Tailscale: Not installed",
+        "tailscale_warning" => "Tailscale is down but Gateway uses a Tailscale IP",
+
+        // Connection quality
+        "latency_label" => "Latency: ",
+        "latency_na" => "Latency: N/A",
+        "latency_warning" => "High latency detected",
+
         _ => key,
     }
 }
@@ -383,6 +397,18 @@ fn zh_tw(key: &str) -> Option<&'static str> {
 
         "just_now" => "剛剛",
 
+        "tailscale_peers_found" => "偵測到 Tailscale 節點 — 選擇閘道主機：",
+        "tailscale_manual_entry" => "手動輸入",
+        "tailscale_hint" => "提示：安裝 Tailscale 可安全遠端存取您的閘道",
+        "tailscale_connected" => "Tailscale: 已連線",
+        "tailscale_disconnected" => "Tailscale: 已斷線",
+        "tailscale_not_installed" => "Tailscale: 未安裝",
+        "tailscale_warning" => "Tailscale 已斷線，但閘道使用 Tailscale IP",
+
+        "latency_label" => "延遲: ",
+        "latency_na" => "延遲: 無",
+        "latency_warning" => "偵測到高延遲",
+
         _ => return None,
     })
 }
@@ -490,6 +516,18 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "stats_last_activity" => "最后活动: ",
 
         "just_now" => "刚刚",
+
+        "tailscale_peers_found" => "检测到 Tailscale 节点 — 选择网关主机：",
+        "tailscale_manual_entry" => "手动输入",
+        "tailscale_hint" => "提示：安装 Tailscale 可安全远程访问您的网关",
+        "tailscale_connected" => "Tailscale: 已连接",
+        "tailscale_disconnected" => "Tailscale: 已断开",
+        "tailscale_not_installed" => "Tailscale: 未安装",
+        "tailscale_warning" => "Tailscale 已断开，但网关使用 Tailscale IP",
+
+        "latency_label" => "延迟: ",
+        "latency_na" => "延迟: 无",
+        "latency_warning" => "检测到高延迟",
 
         _ => return None,
     })

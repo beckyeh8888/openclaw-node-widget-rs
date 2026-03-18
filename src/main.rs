@@ -12,6 +12,7 @@ mod monitor;
 mod process;
 mod settings;
 mod setup;
+mod tailscale;
 mod tray;
 mod uninstall;
 mod update;
@@ -238,6 +239,8 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     )?;
     tray.set_gateway_configured(gateway_enabled)?;
 
+    let mut last_tailscale_check = std::time::Instant::now();
+
     loop {
         #[cfg(windows)]
         unsafe {
@@ -387,6 +390,13 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                 }
                 TrayCommand::Exit => return Ok(()),
             }
+        }
+
+        // Periodic Tailscale status check (every 60s)
+        if last_tailscale_check.elapsed() >= std::time::Duration::from_secs(60) {
+            let gw_urls: Vec<String> = config.effective_connections().iter().map(|c| c.gateway_url.clone()).collect();
+            tray.update_tailscale_status(&gw_urls);
+            last_tailscale_check = std::time::Instant::now();
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
