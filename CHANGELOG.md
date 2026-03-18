@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0] - 2026-03-18
+
+### Added
+- **Gateway WebSocket integration** — real-time Node status via Gateway connection
+- Device identity authentication (Ed25519 key pair, auto-generated)
+- Node status polling via `node.list` API (30s interval)
+- Exponential backoff reconnection (1s → 60s)
+
+### Changed
+- Node status now determined by Gateway `node.list` (single source of truth)
+- Cleaner tray menu: `Node: Online` / `Node: Offline` / `Node: Stopped`
+- Simplified tooltip: `OpenClaw Node: Online\nGateway: Connected`
+- Reduced log verbosity — sensitive data (tokens) moved to debug level
+
+### Fixed
+- Device identity required for Gateway scopes (without it, scopes are cleared)
+- Removed presence event parsing (only shows WS clients, not paired nodes)
+- Removed snapshot presence parsing (caused status flicker on connect)
+- Eliminated Online→Offline→Online status flicker during initial connection
+
 ## [0.2.0] - 2026-03-17
 
 ### Added
