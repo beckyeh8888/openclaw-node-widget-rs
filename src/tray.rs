@@ -119,7 +119,6 @@ impl TrayState {
         a(&settings_item)?;
         a(&setup_wizard_item)?;
         a(&check_updates_item)?;
-        a(&download_update_item)?;
         a(&copy_diagnostics_item)?;
         a(&sep())?;
         a(&uninstall_item)?;
