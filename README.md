@@ -184,10 +184,10 @@ Right-click the tray icon → 右鍵點系統列圖示：
 
 ---
 
-## 🖥️ Multi-Node / 多節點
+## 🖥️ Multi-Gateway / 多 Gateway
 
-Monitor multiple OpenClaw Gateways from one widget:  
-一個 widget 監控多個 Gateway：
+Got more than one OpenClaw setup? Monitor them all from a single widget:  
+有多套 OpenClaw？一個 widget 全部監控：
 
 ```toml
 # config.toml
