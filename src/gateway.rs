@@ -434,11 +434,11 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
         tokio::select! {
             _ = presence_ticker.tick() => {
                 let req_id = Uuid::new_v4().to_string();
-                info!(req_id = %req_id, "sending system-presence request");
+                info!(req_id = %req_id, "sending node.list request");
                 let frame = json!({
                     "type": "req",
                     "id": req_id,
-                    "method": "system-presence",
+                    "method": "node.list",
                     "params": {}
                 });
                 write
@@ -509,17 +509,16 @@ fn handle_frame(
             info!(ok, ?id, ?pending_presence, "response frame received");
             if id.is_some() && id == pending_presence {
                 if ok {
-                    info!("system-presence response OK");
+                    info!("node.list response OK");
                     if let Some(payload) = frame.get("payload") {
-                        info!(payload = %payload, "system-presence payload");
+                        info!(payload = %payload, "node.list payload");
                     }
-                    if let Some(event) = node_status_from_presence(frame.get("payload")) {
+                    if let Some(event) = node_status_from_node_list(frame.get("payload")) {
                         let _ = tx.send(event);
                     }
                 } else {
-                    // Log the error
                     let error = frame.get("error").or_else(|| frame.get("payload"));
-                    info!(?error, "system-presence request REJECTED");
+                    info!(?error, "node.list request REJECTED");
                 }
             }
         }
@@ -559,19 +558,25 @@ fn is_node_presence(p: &Value) -> bool {
     (mode == "node" || host == "node-host") && reason != "disconnect"
 }
 
-fn node_status_from_presence(payload: Option<&Value>) -> Option<GatewayEvent> {
+fn node_status_from_node_list(payload: Option<&Value>) -> Option<GatewayEvent> {
     let payload = payload?;
-    // system-presence response: payload is the response body
-    // Try payload.presence or payload itself as array
+    // node.list response: payload is an array of nodes OR { nodes: [...] }
     let items = payload
-        .get("presence")
-        .and_then(Value::as_array)
-        .or_else(|| payload.as_array())?;
+        .as_array()
+        .or_else(|| payload.get("nodes").and_then(Value::as_array))?;
 
-    let node_online = items.iter().any(|p| is_node_presence(p));
+    let node_online = items.iter().any(|n| {
+        n.get("connected").and_then(Value::as_bool).unwrap_or(false)
+    });
+    let node_id = items.iter()
+        .find(|n| n.get("connected").and_then(Value::as_bool).unwrap_or(false))
+        .and_then(|n| n.get("nodeId").and_then(Value::as_str))
+        .unwrap_or("unknown")
+        .to_string();
+
     Some(GatewayEvent::NodeStatus {
         online: node_online,
-        node_id: "node".to_string(),
+        node_id,
     })
 }
 
