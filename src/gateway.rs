@@ -66,6 +66,11 @@ pub enum GatewayEvent {
         connection_name: String,
         message: String,
     },
+    Latency {
+        #[allow(dead_code)]
+        connection_name: String,
+        ms: u64,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -514,9 +519,17 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
 
     let mut presence_ticker = tokio::time::interval(Duration::from_secs(30));
     let mut pending_presence: Option<String> = None;
+    let mut ping_ticker = tokio::time::interval(Duration::from_secs(30));
+    let mut ping_sent_at: Option<std::time::Instant> = None;
 
     loop {
         tokio::select! {
+            _ = ping_ticker.tick() => {
+                let payload = b"ocw-ping".to_vec();
+                if write.send(Message::Ping(payload.into())).await.is_ok() {
+                    ping_sent_at = Some(std::time::Instant::now());
+                }
+            }
             _ = presence_ticker.tick() => {
                 let req_id = Uuid::new_v4().to_string();
                 info!(req_id = %req_id, "sending node.list request");
@@ -554,6 +567,16 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                             .send(Message::Pong(payload))
                             .await
                             .map_err(|e| ConnectError::Retryable(format!("pong failed: {e}")))?;
+                    }
+                    Message::Pong(_) => {
+                        if let Some(sent_at) = ping_sent_at.take() {
+                            let ms = sent_at.elapsed().as_millis() as u64;
+                            debug!(latency_ms = ms, "pong received");
+                            let _ = client.tx.send(GatewayEvent::Latency {
+                                connection_name: client.connection_name.clone(),
+                                ms,
+                            });
+                        }
                     }
                     Message::Close(close_frame) => {
                         let reason = close_frame
