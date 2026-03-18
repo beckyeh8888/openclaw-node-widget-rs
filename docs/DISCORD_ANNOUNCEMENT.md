@@ -1,30 +1,43 @@
-# Discord Announcement — OpenClaw Node Widget v0.4.0
+# Discord Announcement — OpenClaw Node Widget v0.7.0
 
 > Copy-paste the message below into Discord.
 
 ---
 
-🚀 **OpenClaw Node Widget v0.4.0 is here!**
+🚀 **OpenClaw Node Widget v0.7.0 — System Tray Monitor for Your OpenClaw Node**
 
-A lightweight system tray widget that lets you monitor and control your OpenClaw Node — no terminal required. Works on Windows, macOS, and Linux.
+A lightweight, cross-platform system tray widget to monitor and control your OpenClaw Node. No terminal, no CLI — just a tray icon.
 
-**What's new in v0.4.0:**
-- 🌐 **Gateway WebSocket** — Real-time remote monitoring of your node via WebSocket
-- ⚙️ **GUI Settings** — Visual settings window (no more editing config files by hand)
-- 🆕 **Auto-Update Check** — Get notified when a new version is available
-- 🌍 **Multi-language** — Now supports English, Traditional Chinese, and Simplified Chinese
-- 🔔 **Native Windows Toast** — Proper branded notifications on Windows
-- 🔍 **Connection Details** — See gateway version, node name, and uptime in the tray menu
+**✨ Key Features:**
+- 🟢 **Live Status** — Green = online, red = offline, at a glance
+- 🔄 **One-Click Control** — Start, stop, restart your node from right-click menu
+- 🌐 **Gateway WebSocket** — Real-time remote monitoring via WebSocket
+- 🔒 **Tailscale Integration** — Auto-detects peers, secure remote access out of the box
+- 📊 **Diagnostics** — Connection latency, error tracking, one-click copy diagnostics
+- 🔔 **Smart Notifications** — Node status changes, Tailscale drops, update alerts
+- ⬇️ **Auto-Update** — One-click download + auto-restart when new version available
+- 🌍 **Multi-language** — English, 繁體中文, 简体中文
+- 🖥️ **Multi-Node** — Monitor multiple Gateways from one widget
+- 🧙 **Setup Wizard** — GUI wizard auto-detects your node config on first launch
 
-**Download:** <https://github.com/beckyeh8888/openclaw-node-widget-rs/releases/latest>
+**📦 Downloads:**
+| Platform | File |
+|----------|------|
+| Windows | `.zip` + `.exe` installer |
+| macOS (Apple Silicon) | `.dmg` |
+| macOS (Intel) | `.dmg` |
+| Linux | `.tar.gz` + `.deb` |
 
-**Build from source:**
+👉 **Download:** <https://github.com/beckyeh8888/openclaw-node-widget-rs/releases/latest>
+
+**🔒 Remote Access:**
+Install [Tailscale](https://tailscale.com/download) on both machines → the widget auto-detects your Gateway during setup. No port forwarding needed.
+
+**🛠️ Build from source:**
 ```
 git clone https://github.com/beckyeh8888/openclaw-node-widget-rs.git
 cd openclaw-node-widget-rs
 cargo build --release
 ```
 
-Just download, run, and the Setup Wizard will walk you through configuration. Your node status shows right in the system tray — green = online, red = offline.
-
-Feedback and issues welcome: <https://github.com/beckyeh8888/openclaw-node-widget-rs/issues>
+Feedback & issues: <https://github.com/beckyeh8888/openclaw-node-widget-rs/issues>
