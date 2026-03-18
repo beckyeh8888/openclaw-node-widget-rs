@@ -324,6 +324,7 @@ impl eframe::App for SetupWizardApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.dark_mode_applied {
             ctx.set_visuals(egui::Visuals::dark());
+            crate::i18n::setup_cjk_fonts(ctx);
             self.dark_mode_applied = true;
         }
 

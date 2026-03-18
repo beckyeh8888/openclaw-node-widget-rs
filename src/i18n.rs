@@ -1,5 +1,85 @@
 use std::sync::OnceLock;
 
+/// Configure egui fonts to support CJK characters.
+/// Call once in the first `update()` of each egui app.
+pub fn setup_cjk_fonts(ctx: &eframe::egui::Context) {
+    use eframe::egui::{FontData, FontDefinitions, FontFamily};
+
+    let mut fonts = FontDefinitions::default();
+
+    // Try platform-specific CJK fonts
+    let cjk_data = load_system_cjk_font();
+
+    if let Some(data) = cjk_data {
+        fonts
+            .font_data
+            .insert("cjk".to_string(), std::sync::Arc::new(FontData::from_owned(data)));
+
+        // Add CJK font as fallback for proportional and monospace
+        fonts
+            .families
+            .get_mut(&FontFamily::Proportional)
+            .unwrap()
+            .push("cjk".to_string());
+        fonts
+            .families
+            .get_mut(&FontFamily::Monospace)
+            .unwrap()
+            .push("cjk".to_string());
+
+        ctx.set_fonts(fonts);
+    }
+}
+
+fn load_system_cjk_font() -> Option<Vec<u8>> {
+    // Windows: Microsoft JhengHei (微軟正黑體) or Microsoft YaHei (微软雅黑)
+    #[cfg(windows)]
+    {
+        let paths = [
+            "C:\\Windows\\Fonts\\msjh.ttc",     // 微軟正黑體
+            "C:\\Windows\\Fonts\\msyh.ttc",     // 微软雅黑
+            "C:\\Windows\\Fonts\\simsun.ttc",   // 宋体
+        ];
+        for path in &paths {
+            if let Ok(data) = std::fs::read(path) {
+                return Some(data);
+            }
+        }
+    }
+
+    // macOS: PingFang or Hiragino
+    #[cfg(target_os = "macos")]
+    {
+        let paths = [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/Library/Fonts/Arial Unicode.ttf",
+        ];
+        for path in &paths {
+            if let Ok(data) = std::fs::read(path) {
+                return Some(data);
+            }
+        }
+    }
+
+    // Linux: Noto Sans CJK or WenQuanYi
+    #[cfg(target_os = "linux")]
+    {
+        let paths = [
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        ];
+        for path in &paths {
+            if let Ok(data) = std::fs::read(path) {
+                return Some(data);
+            }
+        }
+    }
+
+    None
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lang {
     En,
