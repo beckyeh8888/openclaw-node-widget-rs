@@ -73,7 +73,14 @@
    │ Node     │   │ Node     │   │ Node    │
    │ Widget 🟢│   │ Widget 🟢│   │ Widget🟢│
    └─────────┘   └──────────┘   └─────────┘
+
+   Choose your interface 選擇你的介面:
+   • Widget (GUI) — system tray, zero terminal 系統列，零終端
+   • CLI — `openclaw node` commands 命令列控制
+   • Both — they work side by side 可以同時用
 ```
+
+> **Prefer the terminal?** OpenClaw Node also has a full CLI: `openclaw node start`, `openclaw node stop`, `openclaw node status`. The Widget is the GUI layer on top — use whichever you like, or both.
 
 ---
 
@@ -250,6 +257,12 @@ A: **Node** = the agent's hands on that machine (runs commands, accesses files).
 
 **Q: Node 跟 Widget 差在哪？**  
 A: **Node** = agent 在那台機器上的手（執行指令、存取檔案）。**Widget** = 你的眼睛（顯示狀態、讓你控制）。遠端機器兩個都裝。
+
+**Q: Do I have to use the Widget? Can I just use CLI?**  
+A: Absolutely. OpenClaw Node has a full CLI (`openclaw node start/stop/status`). The Widget is just a GUI layer on top. Use CLI, Widget, or both — they don't conflict.
+
+**Q: 一定要用 Widget 嗎？可以只用 CLI 嗎？**  
+A: 當然可以。OpenClaw Node 有完整的 CLI（`openclaw node start/stop/status`）。Widget 只是上面的 GUI 層。CLI、Widget、或兩個一起用都行 — 不衝突。
 
 ### Networking / 網路
 
