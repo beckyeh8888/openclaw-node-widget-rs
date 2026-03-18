@@ -23,6 +23,17 @@ jobs:
           mkdir dist
           copy target\release\openclaw-node-widget-rs.exe dist\${{ env.BINARY_NAME }}.exe
           Compress-Archive -Path dist\${{ env.BINARY_NAME }}.exe -DestinationPath ${{ env.BINARY_NAME }}-windows-x64.zip
+      - name: Generate ICO from PNG
+        continue-on-error: true
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $png = [System.Drawing.Image]::FromFile("$PWD\assets\icon_online.png")
+          $icon = [System.Drawing.Icon]::FromHandle($png.GetHicon())
+          $stream = [System.IO.File]::Create("$PWD\assets\icon_online.ico")
+          $icon.Save($stream)
+          $stream.Close()
+          $png.Dispose()
       - name: Build NSIS installer
         continue-on-error: true
         shell: powershell
@@ -54,10 +65,20 @@ jobs:
           cp target/release/openclaw-node-widget-rs dist/${{ env.BINARY_NAME }}
           chmod +x dist/${{ env.BINARY_NAME }}
           cd dist && tar czf ../${{ env.BINARY_NAME }}-macos-x64.tar.gz ${{ env.BINARY_NAME }}
+      - name: Create .app bundle
+        run: ./scripts/bundle-macos.sh
+      - name: Create DMG
+        run: |
+          hdiutil create -volname "OpenClaw Node Widget" \
+            -srcfolder "OpenClaw Node Widget.app" \
+            -ov -format UDZO \
+            "${{ env.BINARY_NAME }}-macos-x64.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-x64
-          path: ${{ env.BINARY_NAME }}-macos-x64.tar.gz
+          path: |
+            ${{ env.BINARY_NAME }}-macos-x64.tar.gz
+            ${{ env.BINARY_NAME }}-macos-x64.dmg
 
   build-macos-arm:
     runs-on: macos-14
@@ -72,10 +93,20 @@ jobs:
           cp target/release/openclaw-node-widget-rs dist/${{ env.BINARY_NAME }}
           chmod +x dist/${{ env.BINARY_NAME }}
           cd dist && tar czf ../${{ env.BINARY_NAME }}-macos-arm64.tar.gz ${{ env.BINARY_NAME }}
+      - name: Create .app bundle
+        run: ./scripts/bundle-macos.sh
+      - name: Create DMG
+        run: |
+          hdiutil create -volname "OpenClaw Node Widget" \
+            -srcfolder "OpenClaw Node Widget.app" \
+            -ov -format UDZO \
+            "${{ env.BINARY_NAME }}-macos-arm64.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: macos-arm64
-          path: ${{ env.BINARY_NAME }}-macos-arm64.tar.gz
+          path: |
+            ${{ env.BINARY_NAME }}-macos-arm64.tar.gz
+            ${{ env.BINARY_NAME }}-macos-arm64.dmg
 
   build-linux:
     runs-on: ubuntu-latest
@@ -148,7 +179,9 @@ jobs:
             openclaw-node-widget-windows-x64.zip
             openclaw-node-widget-windows-x64-setup.exe
             openclaw-node-widget-macos-x64.tar.gz
+            openclaw-node-widget-macos-x64.dmg
             openclaw-node-widget-macos-arm64.tar.gz
+            openclaw-node-widget-macos-arm64.dmg
             openclaw-node-widget-linux-x64.tar.gz
             openclaw-node-widget-linux-x64.deb
           generate_release_notes: true
