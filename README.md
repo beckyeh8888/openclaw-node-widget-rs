@@ -1,159 +1,225 @@
 <p align="center">
-  <img src="assets/icon_online.png" width="80" alt="OpenClaw Node Widget">
+  <img src="assets/icon_online.png" width="120" alt="OpenClaw Node Widget">
 </p>
 
-<h1 align="center">OpenClaw Node Widget</h1>
+<h1 align="center">🦞 OpenClaw Node Widget</h1>
 
 <p align="center">
-  <strong>Lightweight system tray widget to monitor and control your OpenClaw Node</strong>
+  <strong>Your lobster lives at home. You don't have to.</strong><br>
+  <em>Keep your AI agent in your pocket — wherever you go.</em>
 </p>
 
 <p align="center">
   <a href="https://github.com/beckyeh8888/openclaw-node-widget-rs/actions"><img src="https://github.com/beckyeh8888/openclaw-node-widget-rs/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/beckyeh8888/openclaw-node-widget-rs/releases/latest"><img src="https://img.shields.io/github/v/release/beckyeh8888/openclaw-node-widget-rs" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/beckyeh8888/openclaw-node-widget-rs" alt="License"></a>
+  <a href="https://github.com/beckyeh8888/openclaw-node-widget-rs/releases"><img src="https://img.shields.io/github/downloads/beckyeh8888/openclaw-node-widget-rs/total" alt="Downloads"></a>
 </p>
 
 ---
 
-## ✨ Features
+## The Story / 故事的開始
 
-- 🟢 **Live Status** — System tray icon shows node status at a glance (green = online, red = offline)
-- 🌐 **Gateway WebSocket** — Real-time remote monitoring via WebSocket connection to OpenClaw Gateway
-- 🔄 **One-Click Control** — Start, stop, and restart your node from the right-click menu
-- 🧙 **Setup Wizard** — GUI wizard auto-detects your node configuration on first launch
-- ⚙️ **GUI Settings** — Opens GUI settings window to configure all options visually
-- 🚀 **Autostart** — Optionally start on login (Windows, macOS, Linux)
-- 🔔 **Native Notifications** — Desktop alerts when your node goes online or offline (native Windows toast)
-- 🛡️ **Crash Protection** — Detects crash loops and pauses auto-restart
-- 🔒 **Single Instance** — Lock file prevents multiple widgets from running
-- 🔍 **Connection Details** — View gateway version, node name, and uptime at a glance
-- 🆕 **Auto-Update Check** — Periodic check for new releases with one-click download
-- 🌍 **Multi-language** — Supports English, Traditional Chinese (zh-TW), and Simplified Chinese (zh-CN)
-- 🗑️ **Uninstall** — Clean removal of config, autostart entries, and shortcuts
-- ⚡ **Lightweight** — ~9MB native binary, minimal resource usage
+> My OpenClaw agent runs 24/7 on a Mac mini at home — answering messages, managing cron jobs, monitoring stocks, even doing divination readings for friends.
+>
+> But when I'm out? I used to have **no idea** if it was still alive.
+>
+> So I built this. A tiny tray icon that tells me: **green = alive, red = fix it.** One right-click to restart, check diagnostics, or see what went wrong. Works from the café, the office, the train — anywhere with internet.
+>
+> Now my lobster 🦞 stays home, but I take it everywhere.
 
-<!-- TODO: Add screenshot of tray menu with all features -->
+> 我的 OpenClaw agent 在家裡的 Mac mini 上 24/7 運行 — 回訊息、跑排程、看盤、幫朋友問卦。
+>
+> 但出門在外？我根本不知道它是不是還活著。
+>
+> 所以我做了這個。一個小小的系統列圖示：**綠色 = 活著，紅色 = 去修。** 右鍵一點就能重啟、看錯誤、查診斷。咖啡廳、辦公室、火車上 — 有網路就行。
+>
+> 現在我的龍蝦 🦞 住在家裡，但隨時跟著我。
 
-## 📦 Installation
+---
 
-### Download (Recommended)
+## What is this? / 這是什麼？
 
-Grab the latest release for your platform:
+**OpenClaw Node Widget** is a lightweight system tray app that monitors your [OpenClaw](https://openclaw.ai) AI agent node. Think of it as a health dashboard for your always-on AI assistant — but it lives in your taskbar, not a browser tab.
 
-| Platform | Download |
-|----------|----------|
-| Windows (x64) | [openclaw-node-widget-windows-x64.zip](https://github.com/beckyeh8888/openclaw-node-widget-rs/releases/latest) |
-| macOS (Apple Silicon) | [openclaw-node-widget-macos-arm64.tar.gz](https://github.com/beckyeh8888/openclaw-node-widget-rs/releases/latest) |
-| macOS (Intel) | [openclaw-node-widget-macos-x64.tar.gz](https://github.com/beckyeh8888/openclaw-node-widget-rs/releases/latest) |
-| Linux (x64) | [openclaw-node-widget-linux-x64.tar.gz](https://github.com/beckyeh8888/openclaw-node-widget-rs/releases/latest) |
-| Linux (deb) | [openclaw-node-widget-linux-x64.deb](https://github.com/beckyeh8888/openclaw-node-widget-rs/releases/latest) |
+**OpenClaw Node Widget** 是一個輕量級系統列應用，用來監控你的 [OpenClaw](https://openclaw.ai) AI agent。把它想成你 AI 助手的健康儀表板 — 但它住在工作列，不是瀏覽器分頁。
 
-### Build from Source
+**Works on:** Windows · macOS · Linux  
+**Size:** ~9MB · **CPU:** Near zero · **Memory:** ~15MB
+
+---
+
+## ✨ Features / 功能
+
+| | Feature | 功能 |
+|---|---------|------|
+| 🟢 | **Live Status** — Green/red/yellow tray icon | 即時狀態 — 綠/紅/黃圖示一目了然 |
+| 🌐 | **Gateway WebSocket** — Real-time remote monitoring | 即時遠端監控（WebSocket） |
+| 🔄 | **One-Click Control** — Start/stop/restart from tray | 一鍵啟動/停止/重啟 |
+| 🔒 | **Tailscale Integration** — Auto-detect VPN peers | Tailscale 整合，自動偵測 VPN 節點 |
+| 📊 | **Diagnostics** — Latency, errors, copy-to-clipboard | 診斷資訊：延遲、錯誤、一鍵複製 |
+| 🔔 | **Smart Notifications** — Status, VPN, updates | 智慧通知：狀態變化、VPN 斷線、更新 |
+| ⬇️ | **Auto-Update** — Download + auto-restart | 自動更新 + 自動重啟 |
+| 🌍 | **Multi-language** — EN / 繁中 / 简中 | 多語言支援 |
+| 🖥️ | **Multi-Node** — Monitor multiple Gateways | 多節點：同時監控多個 Gateway |
+| 🧙 | **Setup Wizard** — Guided first-run configuration | 設定精靈：首次啟動自動引導 |
+| 🛡️ | **Crash Protection** — Auto-restart with loop detection | 當機保護 + 迴圈偵測 |
+| ⚙️ | **GUI Settings** — No config file editing needed | 圖形化設定，不用改設定檔 |
+
+---
+
+## 📦 Download / 下載
+
+Grab the latest from [**Releases**](https://github.com/beckyeh8888/openclaw-node-widget-rs/releases/latest):
+
+| Platform 平台 | File 檔案 |
+|---------------|-----------|
+| 🪟 Windows x64 | `.zip` (portable) |
+| 🍎 macOS Apple Silicon | `.dmg` |
+| 🍎 macOS Intel | `.dmg` |
+| 🐧 Linux x64 | `.tar.gz` / `.deb` |
+
+> **Windows SmartScreen:** The binary isn't code-signed yet. Click **"More info" → "Run anyway"**. You can verify the source yourself — it's all open source.
+>
+> **Windows SmartScreen：** 二進位檔尚未數位簽章。點「更多資訊」→「仍要執行」。原始碼完全開源，你可以自己驗證。
+
+---
+
+## 🚀 Quick Start / 快速開始
+
+```
+1. Download → 下載
+2. Run → 執行
+3. Wizard pops up → 設定精靈自動出現
+4. Done! → 完成！
+5. Green icon in tray = your lobster is alive 🦞
+   系統列綠色圖示 = 你的龍蝦活著 🦞
+```
+
+That's it. No CLI. No config files. No terminal.  
+就這樣。不用命令列。不用改設定檔。不用開終端機。
+
+---
+
+## 🔒 Remote Access with Tailscale / 遠端存取
+
+Your OpenClaw node is at home. You're not. Here's how to connect:
+
+你的 OpenClaw 在家裡。你不在。這樣連：
+
+1. Install [Tailscale](https://tailscale.com/download) on **both** machines — 兩台都裝
+2. Sign in to the same account — 登入同一帳號
+3. Run the widget → it **auto-detects** your home machine — 啟動 widget → 自動偵測你家的機器
+4. Select your Gateway → done — 選你的 Gateway → 完成
+
+**No port forwarding. No VPN config. No firewall rules.**  
+**不用轉 port。不用設 VPN。不用改防火牆。**
+
+---
+
+## 🖱️ Tray Menu / 系統列選單
+
+Right-click the tray icon → 右鍵點系統列圖示：
+
+| Action 操作 | Description 說明 |
+|-------------|------------------|
+| 📊 Status | Node status + connection details 節點狀態 + 連線詳情 |
+| ⏱️ Latency | WebSocket ping latency 延遲監控 |
+| 🔒 Tailscale | VPN connection status VPN 連線狀態 |
+| 🔄 Restart Node | One-click restart 一鍵重啟 |
+| ⏹️ Stop Node | Stop the node 停止節點 |
+| 🌐 Open Gateway | Open Gateway web UI 開啟 Gateway 介面 |
+| 📁 View Logs | Open log directory 開啟日誌目錄 |
+| ⚙️ Settings | GUI settings window 圖形設定視窗 |
+| 🧙 Setup Wizard | Re-run setup 重新設定 |
+| ⬇️ Check Updates | Check for new version 檢查更新 |
+| 📋 Copy Diagnostics | Copy debug info (token masked) 複製診斷資訊 |
+| 🗑️ Uninstall | Clean removal 完整移除 |
+
+---
+
+## 🖥️ Multi-Node / 多節點
+
+Monitor multiple OpenClaw Gateways from one widget:  
+一個 widget 監控多個 Gateway：
+
+```toml
+# config.toml
+[[connections]]
+name = "Home 家裡"
+gateway_url = "ws://100.104.6.121:18789"
+gateway_token = "abc..."
+
+[[connections]]
+name = "Office 辦公室"
+gateway_url = "ws://100.68.12.51:18789"
+gateway_token = "def..."
+```
+
+Or use the **Settings** GUI to add/remove connections.  
+或用**設定介面**新增/移除連線。
+
+---
+
+## 🛠️ Build from Source / 從原始碼編譯
 
 ```bash
 git clone https://github.com/beckyeh8888/openclaw-node-widget-rs.git
 cd openclaw-node-widget-rs
 cargo build --release
+# Binary at: target/release/openclaw-node-widget-rs
 ```
 
-## 🚀 Quick Start
+**Requirements:** Rust 1.75+ · On Linux: `libgtk-3-dev libayatana-appindicator3-dev`
 
-1. **Download and run** the widget
-2. **First launch** opens the Setup Wizard automatically
-3. The wizard **auto-detects** your OpenClaw Node configuration
-4. Click through the steps → **Done!**
-5. The widget appears in your **system tray**
+---
 
-<!-- TODO: Add screenshot of setup wizard -->
-<!-- TODO: Add screenshot of tray icon in system tray -->
+## 🗺️ Roadmap / 路線圖
 
-## 🖱️ Tray Menu
+- [x] System tray + live status 系統列 + 即時狀態
+- [x] Setup wizard + autostart 設定精靈 + 開機自啟
+- [x] Cross-platform CI (Windows/macOS/Linux) 跨平台 CI
+- [x] GUI wizard + settings 圖形精靈 + 設定
+- [x] Gateway WebSocket integration WebSocket 整合
+- [x] Native notifications + auto-update 原生通知 + 自動更新
+- [x] Multi-level diagnostics 多層級診斷
+- [x] Multi-node + Tailscale 多節點 + Tailscale
+- [x] macOS .dmg + Windows installer 安裝程式
+- [ ] Mobile companion (iOS/Android) 手機版
+- [ ] Code signing 程式碼簽章
 
-Right-click the tray icon for:
+---
 
-| Action | Description |
-|--------|-------------|
-| **Refresh** | Re-check node status |
-| **Restart Node** | Stop and restart the node process |
-| **Stop Node** | Stop the node process |
-| **Open Gateway UI** | Open the Gateway web interface in your browser |
-| **View Logs** | Open the logs directory |
-| **Auto-restart** | Toggle automatic restart on crash |
-| **Auto-start** | Toggle start on login |
-| **Settings** | Opens GUI settings window |
-| **Setup Wizard** | Re-run the setup wizard |
-| **Check for Updates** | Check GitHub for a newer release |
-| **Connection Details** | Shows gateway version, node name, and uptime |
-| **Uninstall** | Remove config, autostart entries, and exit |
-| **Exit** | Quit the widget |
+## FAQ / 常見問題
 
-<!-- TODO: Add screenshot of tray menu -->
+**Q: Do I need OpenClaw installed on the same machine?**  
+A: No! The widget connects to your Gateway remotely via WebSocket. Your OpenClaw can be on any machine.
 
-## ⚙️ Configuration
+**Q: 我需要在同一台電腦裝 OpenClaw 嗎？**  
+A: 不用！Widget 透過 WebSocket 遠端連接 Gateway。你的 OpenClaw 可以在任何機器上。
 
-Config is stored at:
-- **Windows:** `%APPDATA%\openclaw-node-widget\config.toml`
-- **macOS:** `~/Library/Application Support/openclaw-node-widget/config.toml`
-- **Linux:** `~/.config/openclaw-node-widget/config.toml`
+**Q: Is it safe? My token is in a config file.**  
+A: The token is only stored locally. Logs automatically mask tokens. Copy Diagnostics masks tokens too.
 
-```toml
-[gateway]
-url = "ws://100.104.6.121:18789"
-token = ""
+**Q: 安全嗎？Token 存在設定檔裡。**  
+A: Token 只存在本地。日誌自動遮罩 token。複製診斷也會遮罩。
 
-[node]
-command = "cmd.exe"                    # Windows
-args = ["/c", "C:\\Users\\you\\.openclaw\\node.cmd"]
-working_dir = "C:\\Users\\you\\.openclaw"
+**Q: What happens if the widget crashes?**  
+A: It has crash protection with loop detection. If the node crashes, the widget auto-restarts it (with configurable limits).
 
-[startup]
-auto_start = true
-```
+---
 
-## 🌍 Multi-language
+## 📄 License / 授權
 
-The widget supports multiple languages:
+[MIT](LICENSE) © [Beck Yeh](https://github.com/beckyeh8888)
 
-| Language | Code |
-|----------|------|
-| English | `en` |
-| Traditional Chinese | `zh-TW` |
-| Simplified Chinese | `zh-CN` |
+Built with 🦀 Rust + ❤️ from Taiwan 🇹🇼
 
-The language is auto-detected from your system locale. You can override it in **Settings** or by setting `language` in the config file under `[widget]`.
+---
 
-## 🔒 Remote Access with Tailscale
-
-For secure remote monitoring of your OpenClaw Node:
-
-1. Install [Tailscale](https://tailscale.com/download) on both machines
-2. Sign in to the same Tailscale account
-3. Use the Tailscale IP (100.x.x.x) as your Gateway URL in the Setup Wizard
-4. The widget auto-detects Tailscale peers during setup
-
-No port forwarding, no VPN configuration needed.
-
-## ⚠️ Windows SmartScreen
-
-Windows may show a SmartScreen warning because the binary isn't code-signed yet. Click **"More info" → "Run anyway"** to proceed. This is safe — you can verify the source code yourself.
-
-## 🗺️ Roadmap
-
-- [x] Phase 1: System tray + process detection
-- [x] Phase 2: Setup wizard (CLI), autostart, crash protection
-- [x] Phase 3: GitHub Actions CI + cross-platform releases
-- [x] Phase 4: GUI Setup Wizard (egui)
-- [x] Phase 5: Gateway WebSocket (remote monitoring)
-- [x] Phase 6: Native notifications, auto-update, GUI settings, i18n
-- [ ] Mobile: Companion widget for iOS/Android
-
-## 📄 License
-
-[MIT](LICENSE) © Beck Yeh
-
-## 🔗 Links
-
-- [OpenClaw](https://openclaw.ai) — The AI agent platform
-- [OpenClaw Docs](https://docs.openclaw.ai)
-- [OpenClaw Discord](https://discord.com/invite/clawd)
+<p align="center">
+  <a href="https://openclaw.ai">OpenClaw</a> · 
+  <a href="https://docs.openclaw.ai">Docs</a> · 
+  <a href="https://discord.com/invite/clawd">Discord</a> · 
+  <a href="https://github.com/beckyeh8888/openclaw-node-widget-rs/issues">Issues</a>
+</p>
