@@ -17,6 +17,7 @@ use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::config;
+use crate::tray::mask_token;
 
 const PKCS8_PRIVATE_KEY_PREFIX: [u8; 16] = [
     0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
@@ -198,7 +199,12 @@ pub async fn connect_loop(client: GatewayClient) {
 }
 
 async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
-    info!(url = %client.url, "gateway connecting");
+    let masked_url = if let Some(ref t) = client.token {
+        client.url.replace(t, &mask_token(t))
+    } else {
+        client.url.clone()
+    };
+    info!(url = %masked_url, "gateway connecting");
     let url = url::Url::parse(&client.url)
         .map_err(|e| ConnectError::Fatal(format!("invalid gateway URL: {e}")))?;
     let host = url.host_str().unwrap_or("127.0.0.1");
@@ -330,7 +336,9 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
 
     let connect_json = connect_frame.to_string();
     info!(frame_len = connect_json.len(), "sending connect frame");
-    debug!(connect_frame = %connect_json, "connect frame payload");
+    // Mask token in debug output to prevent leaking credentials
+    let masked_json = connect_json.replace(&token, &mask_token(&token));
+    debug!(connect_frame = %masked_json, "connect frame payload");
     write
         .send(Message::Text(connect_json.into()))
         .await
