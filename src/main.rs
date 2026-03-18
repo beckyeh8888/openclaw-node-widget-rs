@@ -271,18 +271,10 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                         match update::check_for_updates().await {
                             Some((version, url)) => {
                                 let body = format!("{} {version}\n{url}", i18n::t("notif_update_available"));
-                                let _ = notify_rust::Notification::new()
-                                    .appname(i18n::t("app_name"))
-                                    .summary(i18n::t("app_name"))
-                                    .body(&body)
-                                    .show();
+                                tray::send_notification_public(&body);
                             }
                             None => {
-                                let _ = notify_rust::Notification::new()
-                                    .appname(i18n::t("app_name"))
-                                    .summary(i18n::t("app_name"))
-                                    .body(i18n::t("notif_up_to_date"))
-                                    .show();
+                                tray::send_notification_public(i18n::t("notif_up_to_date"));
                             }
                         }
                     });
@@ -291,11 +283,7 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                     match uninstall::confirm_uninstall() {
                         Ok(true) => {
                             let _ = uninstall::perform_uninstall();
-                            let _ = notify_rust::Notification::new()
-                                .appname(i18n::t("app_name"))
-                                .summary(i18n::t("app_name"))
-                                .body(i18n::t("notif_uninstalled"))
-                                .show();
+                            tray::send_notification_public(i18n::t("notif_uninstalled"));
                             return Ok(());
                         }
                         _ => {}

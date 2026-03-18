@@ -68,16 +68,10 @@ async fn do_check() {
 }
 
 fn notify_update(body: &str) {
-    match notify_rust::Notification::new()
-        .appname(t("app_name"))
-        .summary(t("app_name"))
-        .body(body)
-        .show()
-    {
-        Ok(_) => debug!("update notification sent"),
-        Err(e) => warn!("update notification failed: {e}"),
-    }
+    crate::tray::send_notification_public(body);
 }
+
+
 
 fn version_is_newer(remote: &str, current: &str) -> bool {
     let parse = |v: &str| -> (u32, u32, u32) {

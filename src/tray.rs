@@ -350,14 +350,59 @@ fn icon_from_png(bytes: &[u8]) -> Result<Icon> {
     Icon::from_rgba(image.into_raw(), width, height).map_err(|e| AppError::Tray(e.to_string()))
 }
 
+pub fn send_notification_public(body: &str) {
+    send_notification(body);
+}
+
 fn send_notification(body: &str) {
-    match Notification::new()
-        .appname("OpenClaw Node Widget")
-        .summary("OpenClaw Node Widget")
-        .body(body)
-        .show()
+    #[cfg(windows)]
     {
-        Ok(_) => tracing::debug!("notification sent: {body}"),
-        Err(e) => tracing::warn!("notification failed: {e}"),
+        send_notification_windows(body);
+        return;
+    }
+
+    #[cfg(not(windows))]
+    {
+        match Notification::new()
+            .appname("OpenClaw Node Widget")
+            .summary("OpenClaw Node Widget")
+            .body(body)
+            .show()
+        {
+            Ok(_) => tracing::debug!("notification sent: {body}"),
+            Err(e) => tracing::warn!("notification failed: {e}"),
+        }
+    }
+}
+
+#[cfg(windows)]
+fn send_notification_windows(body: &str) {
+    use std::process::Command;
+
+    // Escape single quotes for PowerShell
+    let escaped = body.replace('\'', "''");
+    let script = format!(
+        r#"[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null;
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null;
+$xml = [Windows.Data.Xml.Dom.XmlDocument]::new();
+$xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text>OpenClaw Node Widget</text><text>{escaped}</text></binding></visual><audio silent="false"/></toast>');
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml);
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('OpenClaw.NodeWidget').Show($toast)"#
+    );
+
+    match Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .spawn()
+    {
+        Ok(_) => tracing::debug!("windows toast sent: {body}"),
+        Err(e) => {
+            tracing::warn!("windows toast failed: {e}, falling back to notify-rust");
+            let _ = Notification::new()
+                .appname("OpenClaw Node Widget")
+                .summary("OpenClaw Node Widget")
+                .body(body)
+                .show();
+        }
     }
 }
