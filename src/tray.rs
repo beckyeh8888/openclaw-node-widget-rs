@@ -35,6 +35,8 @@ pub struct TrayState {
     tray: TrayIcon,
     status_item: MenuItem,
     conn_detail_item: MenuItem,
+    last_error_item: MenuItem,
+    last_connected_item: MenuItem,
     auto_restart_item: CheckMenuItem,
     auto_start_item: CheckMenuItem,
     refresh_id: MenuId,
@@ -61,6 +63,8 @@ pub struct TrayState {
     gateway_version: Option<String>,
     node_name: Option<String>,
     connected_at: Option<std::time::Instant>,
+    last_error: Option<String>,
+    last_connected: Option<chrono::DateTime<chrono::Local>>,
 }
 
 impl TrayState {
@@ -78,6 +82,8 @@ impl TrayState {
 
         let status_item = MenuItem::new(format!("Node: {}", t("status_unknown")), false, None);
         let conn_detail_item = MenuItem::new(format!("{}{}", t("connection_details"), t("na")), false, None);
+        let last_error_item = MenuItem::new(format!("{}{}", t("last_error_label"), t("none")), false, None);
+        let last_connected_item = MenuItem::new(format!("{}{}", t("last_connected_label"), t("na")), false, None);
         let refresh_item = MenuItem::new(t("refresh"), true, None);
         let restart_item = MenuItem::new(t("restart_node"), true, None);
         let stop_item = MenuItem::new(t("stop_node"), true, None);
@@ -94,6 +100,8 @@ impl TrayState {
 
         a(&status_item)?;
         a(&conn_detail_item)?;
+        a(&last_error_item)?;
+        a(&last_connected_item)?;
         a(&sep())?;
         a(&refresh_item)?;
         a(&restart_item)?;
@@ -139,6 +147,8 @@ impl TrayState {
             tray,
             status_item,
             conn_detail_item,
+            last_error_item,
+            last_connected_item,
             auto_restart_item,
             auto_start_item,
             refresh_id,
@@ -165,6 +175,8 @@ impl TrayState {
             gateway_version: None,
             node_name: None,
             connected_at: None,
+            last_error: None,
+            last_connected: None,
         })
     }
 
@@ -233,10 +245,12 @@ impl TrayState {
                 self.gateway_status = t("gateway_connected").to_string();
                 self.gateway_version = gateway_version.clone();
                 self.connected_at = Some(std::time::Instant::now());
+                self.last_connected = Some(chrono::Local::now());
             }
             GatewayEvent::Disconnected(reason) => {
                 self.gateway_status = format!("Disconnected: {reason}");
                 self.connected_at = None;
+                self.last_error = Some(truncate_error(reason));
             }
             GatewayEvent::NodeStatus { online, node_name } => {
                 self.gateway_status = if *online {
@@ -251,9 +265,11 @@ impl TrayState {
             GatewayEvent::Error(message) => {
                 self.gateway_status = format!("Error: {message}");
                 self.connected_at = None;
+                self.last_error = Some(truncate_error(message));
             }
         };
         self.update_conn_detail();
+        self.update_diagnostics_items();
         self.refresh_tooltip()
     }
 
@@ -274,6 +290,22 @@ impl TrayState {
             None => t("na").to_string(),
         };
         self.conn_detail_item.set_text(&format!("GW:{gw} | {node} | {uptime}"));
+    }
+
+    fn update_diagnostics_items(&mut self) {
+        let error_text = self
+            .last_error
+            .as_deref()
+            .unwrap_or(t("none"));
+        self.last_error_item
+            .set_text(&format!("{}{}", t("last_error_label"), error_text));
+
+        let connected_text = match self.last_connected {
+            Some(dt) => format_last_connected(dt),
+            None => t("na").to_string(),
+        };
+        self.last_connected_item
+            .set_text(&format!("{}{}", t("last_connected_label"), connected_text));
     }
 
     pub fn show_download_update(&mut self, tag: &str) {
@@ -364,6 +396,23 @@ impl TrayState {
             )))
             .map_err(|e| AppError::Tray(e.to_string()))?;
         Ok(())
+    }
+}
+
+fn truncate_error(msg: &str) -> String {
+    if msg.len() <= 60 {
+        msg.to_string()
+    } else {
+        format!("{}...", &msg[..57])
+    }
+}
+
+fn format_last_connected(dt: chrono::DateTime<chrono::Local>) -> String {
+    let now = chrono::Local::now();
+    if now.date_naive() == dt.date_naive() {
+        dt.format("%H:%M:%S").to_string()
+    } else {
+        dt.format("%m-%d %H:%M").to_string()
     }
 }
 
