@@ -159,11 +159,13 @@ impl TrayState {
         self.tray
             .set_icon(Some(icon_for_status(status)?))
             .map_err(|e| AppError::Tray(e.to_string()))?;
+        let tooltip = match status {
+            NodeStatus::Online => format!("OpenClaw Node: Online\nGateway: {}", self.gateway_status),
+            NodeStatus::Offline => format!("OpenClaw Node: Offline\nGateway: {}", self.gateway_status),
+            NodeStatus::Unknown => format!("OpenClaw Node: Checking...\nGateway: {}", self.gateway_status),
+        };
         self.tray
-            .set_tooltip(Some(format!(
-                "OpenClaw Node: {tooltip_text}\nGateway: {}",
-                self.gateway_status
-            )))
+            .set_tooltip(Some(tooltip))
             .map_err(|e| AppError::Tray(e.to_string()))?;
 
         self.notify_transitions(status, crash_loop);
@@ -186,12 +188,11 @@ impl TrayState {
     pub fn handle_gateway_event(&mut self, event: &GatewayEvent) -> Result<()> {
         self.gateway_status = match event {
             GatewayEvent::Connected => "Connected".to_string(),
-            GatewayEvent::Disconnected(reason) => format!("Disconnected ({reason})"),
-            GatewayEvent::NodeStatus { online, node_id } => {
-                let node_state = if *online { "online" } else { "offline" };
-                format!("Connected ({node_id}: {node_state})")
+            GatewayEvent::Disconnected(reason) => format!("Disconnected: {reason}"),
+            GatewayEvent::NodeStatus { online, .. } => {
+                if *online { "Connected" } else { "Connected (node offline)" }.to_string()
             }
-            GatewayEvent::Error(message) => format!("Error ({message})"),
+            GatewayEvent::Error(message) => format!("Error: {message}"),
         };
         self.refresh_tooltip()
     }

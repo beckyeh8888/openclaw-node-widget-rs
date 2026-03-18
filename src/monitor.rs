@@ -150,18 +150,12 @@ pub fn spawn_monitor(
                             gateway_online = None;
                             gateway_error = Some(reason);
                         }
-                        GatewayEvent::NodeStatus { online, node_id } => {
+                        GatewayEvent::NodeStatus { online, node_id: _ } => {
                             gateway_connected = true;
                             gateway_online = Some(online);
                             gateway_error = None;
 
-                            let _ = status_tx.send(StatusUpdate {
-                                node_status: if online { NodeStatus::Online } else { NodeStatus::Offline },
-                                pid: None,
-                                detail: format!("Gateway node {node_id}: {}", if online { "Online" } else { "Offline" }),
-                                crash_loop,
-                                stop_reason,
-                            });
+                            let _ = status_tx.send(status_from_gateway(gateway_online, None, crash_loop, stop_reason));
                         }
                         GatewayEvent::Error(message) => {
                             gateway_connected = false;

@@ -341,11 +341,11 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
             ConnectError::Retryable(format!("gateway read failed: {e}"))
         })?;
 
-        info!(msg_type = ?message, "received message during connect response");
+        debug!(msg_type = ?message, "received message during connect response");
 
         match message {
             Message::Text(text) => {
-                info!(response = %text, "connect response frame");
+                debug!(response = %text, "connect response frame");
                 let frame = parse_frame(&text)?;
                 if frame_type(&frame) == Some("res") {
                     let id = frame.get("id").and_then(Value::as_str).unwrap_or_default();
@@ -509,9 +509,10 @@ fn handle_frame(
             info!(ok, ?id, ?pending_presence, "response frame received");
             if id.is_some() && id == pending_presence {
                 if ok {
-                    info!("node.list response OK");
                     if let Some(payload) = frame.get("payload") {
-                        info!(payload = %payload, "node.list payload");
+                        // Log just node count, not full PATH dump
+                        let node_count = payload.get("nodes").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
+                        info!(node_count, "node.list response OK");
                     }
                     if let Some(event) = node_status_from_node_list(frame.get("payload")) {
                         let _ = tx.send(event);
