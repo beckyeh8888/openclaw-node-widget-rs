@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0] - 2026-03-19
+
+### Added
+- **Multi-level status** — GatewayDown, AuthFailed, Reconnecting states (not just Online/Offline)
+- **Last Error display** — tray shows most recent error message
+- **Last Connected time** — tray shows when gateway was last connected
+- **Copy Diagnostics** — one-click copy system info to clipboard (token masked)
+- **Log token masking** — gateway token never appears in plain text in logs
+- **Config validation** — startup checks for invalid URL, empty token, missing paths
+- **Download Update button** — appears when new version available, one-click install (Windows)
+
+### Fixed
+- View Logs falls back to .openclaw directory on Windows (no logs/ subfolder)
+- Empty menu item placeholder removed
+
 ## [0.4.0] - 2026-03-18
 
 ### Added
