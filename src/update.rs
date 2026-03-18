@@ -187,7 +187,11 @@ async fn download_and_install_windows(tag: &str) -> Result<(), String> {
         .map_err(|e| format!("failed to write new exe: {e}"))?;
 
     tracing::info!("update installed to {}", current_exe.display());
-    Ok(())
+
+    // Auto-restart: spawn the new exe and exit current process
+    tracing::info!("auto-restarting widget...");
+    let _ = std::process::Command::new(&current_exe).spawn();
+    std::process::exit(0);
 }
 
 fn version_is_newer(remote: &str, current: &str) -> bool {
