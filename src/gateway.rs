@@ -291,7 +291,7 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                 "instanceId": client_id
             },
             "role": "operator",
-            "scopes": ["operator.admin"],
+            "scopes": ["operator.read", "operator.write"],
             "caps": [],
             "auth": { "token": token },
             "locale": "en-US",
