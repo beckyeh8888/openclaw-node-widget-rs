@@ -23,10 +23,19 @@ jobs:
           mkdir dist
           copy target\release\openclaw-node-widget-rs.exe dist\${{ env.BINARY_NAME }}.exe
           Compress-Archive -Path dist\${{ env.BINARY_NAME }}.exe -DestinationPath ${{ env.BINARY_NAME }}-windows-x64.zip
+      - name: Build NSIS installer
+        shell: powershell
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          choco install nsis -y
+          makensis /DPRODUCT_VERSION=$version installer\installer.nsi
+          Move-Item installer\openclaw-node-widget-$version-setup.exe ${{ env.BINARY_NAME }}-windows-x64-setup.exe
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x64
-          path: ${{ env.BINARY_NAME }}-windows-x64.zip
+          path: |
+            ${{ env.BINARY_NAME }}-windows-x64.zip
+            ${{ env.BINARY_NAME }}-windows-x64-setup.exe
 
   build-macos-intel:
     runs-on: macos-latest
@@ -133,6 +142,7 @@ jobs:
         with:
           files: |
             openclaw-node-widget-windows-x64.zip
+            openclaw-node-widget-windows-x64-setup.exe
             openclaw-node-widget-macos-x64.tar.gz
             openclaw-node-widget-macos-arm64.tar.gz
             openclaw-node-widget-linux-x64.tar.gz
