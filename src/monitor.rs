@@ -150,7 +150,7 @@ pub fn spawn_monitor(
                             gateway_online = None;
                             gateway_error = Some(reason);
                         }
-                        GatewayEvent::NodeStatus { online, node_id: _ } => {
+                        GatewayEvent::NodeStatus { online } => {
                             gateway_connected = true;
                             gateway_online = Some(online);
                             gateway_error = None;

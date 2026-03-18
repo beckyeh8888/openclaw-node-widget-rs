@@ -8,6 +8,7 @@ use crate::{
     error::{AppError, Result},
 };
 
+#[cfg(windows)]
 const AUTOSTART_NAME: &str = "OpenClawNodeWidget";
 
 pub fn set_autostart(enabled: bool) -> Result<()> {

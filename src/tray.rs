@@ -132,7 +132,7 @@ impl TrayState {
         &mut self,
         status: NodeStatus,
         detail: &str,
-        pid: Option<i32>,
+        _pid: Option<i32>,
         crash_loop: bool,
         stop_reason: StopReason,
     ) -> Result<()> {

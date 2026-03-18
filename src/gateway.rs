@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use uuid::Uuid;
 
 use crate::config;
@@ -41,7 +41,7 @@ pub struct GatewayClient {
 pub enum GatewayEvent {
     Connected,
     Disconnected(String),
-    NodeStatus { online: bool, node_id: String },
+    NodeStatus { online: bool },
     Error(String),
 }
 
@@ -328,7 +328,7 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
         .map_err(|e| ConnectError::Retryable(format!("connect request send failed: {e}")))?;
     info!("connect frame sent, waiting for response...");
 
-    let hello_ok_frame: Value = loop {
+    let _hello_ok_frame: Value = loop {
         let Some(message) = read.next().await else {
             info!("gateway stream ended during connect (no more frames)");
             return Err(ConnectError::Retryable(
@@ -527,15 +527,9 @@ fn node_status_from_node_list(payload: Option<&Value>) -> Option<GatewayEvent> {
     let node_online = items.iter().any(|n| {
         n.get("connected").and_then(Value::as_bool).unwrap_or(false)
     });
-    let node_id = items.iter()
-        .find(|n| n.get("connected").and_then(Value::as_bool).unwrap_or(false))
-        .and_then(|n| n.get("nodeId").and_then(Value::as_str))
-        .unwrap_or("unknown")
-        .to_string();
 
     Some(GatewayEvent::NodeStatus {
         online: node_online,
-        node_id,
     })
 }
 
