@@ -25,6 +25,8 @@ pub enum TrayCommand {
     Settings,
     SetupWizard,
     CheckForUpdates,
+    DownloadUpdate(String),
+    ShowDownloadButton(String),
     Uninstall,
     Exit,
 }
@@ -43,6 +45,9 @@ pub struct TrayState {
     settings_id: MenuId,
     setup_wizard_id: MenuId,
     check_updates_id: MenuId,
+    download_update_item: MenuItem,
+    download_update_id: MenuId,
+    pending_update_tag: Option<String>,
     uninstall_id: MenuId,
     exit_id: MenuId,
     auto_restart_id: MenuId,
@@ -83,6 +88,7 @@ impl TrayState {
         let settings_item = MenuItem::new(t("settings"), true, None);
         let setup_wizard_item = MenuItem::new(t("setup_wizard"), true, None);
         let check_updates_item = MenuItem::new(t("check_for_updates"), true, None);
+        let download_update_item = MenuItem::new("", false, None);
         let uninstall_item = MenuItem::new(t("uninstall"), true, None);
         let exit_item = MenuItem::new(t("exit"), true, None);
 
@@ -102,6 +108,7 @@ impl TrayState {
         a(&settings_item)?;
         a(&setup_wizard_item)?;
         a(&check_updates_item)?;
+        a(&download_update_item)?;
         a(&sep())?;
         a(&uninstall_item)?;
         a(&exit_item)?;
@@ -122,6 +129,7 @@ impl TrayState {
         let settings_id = settings_item.id().clone();
         let setup_wizard_id = setup_wizard_item.id().clone();
         let check_updates_id = check_updates_item.id().clone();
+        let download_update_id = download_update_item.id().clone();
         let uninstall_id = uninstall_item.id().clone();
         let exit_id = exit_item.id().clone();
         let auto_restart_id = auto_restart_item.id().clone();
@@ -141,6 +149,9 @@ impl TrayState {
             settings_id,
             setup_wizard_id,
             check_updates_id,
+            download_update_item,
+            download_update_id,
+            pending_update_tag: None,
             uninstall_id,
             exit_id,
             auto_restart_id,
@@ -254,6 +265,13 @@ impl TrayState {
         self.conn_detail_item.set_text(&format!("GW:{gw} | {node} | {uptime}"));
     }
 
+    pub fn show_download_update(&mut self, tag: &str) {
+        self.pending_update_tag = Some(tag.to_string());
+        self.download_update_item
+            .set_text(&format!("⬇ Download {tag}"));
+        self.download_update_item.set_enabled(true);
+    }
+
     pub fn set_auto_restart(&mut self, enabled: bool) {
         self.auto_restart_item.set_checked(enabled);
     }
@@ -286,6 +304,12 @@ impl TrayState {
             TrayCommand::SetupWizard
         } else if id == self.check_updates_id {
             TrayCommand::CheckForUpdates
+        } else if id == self.download_update_id {
+            if let Some(tag) = &self.pending_update_tag {
+                TrayCommand::DownloadUpdate(tag.clone())
+            } else {
+                return;
+            }
         } else if id == self.uninstall_id {
             TrayCommand::Uninstall
         } else if id == self.exit_id {

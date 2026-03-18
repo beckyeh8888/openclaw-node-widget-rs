@@ -149,6 +149,7 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     update::spawn_periodic_check();
 
     let (tray_cmd_tx, mut tray_cmd_rx) = mpsc::unbounded_channel();
+    let tray_cmd_tx2 = tray_cmd_tx.clone();
     let (monitor_cmd_tx, monitor_cmd_rx) = mpsc::unbounded_channel();
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
     let (gateway_event_tx, mut gateway_event_rx) = mpsc::unbounded_channel();
@@ -267,17 +268,39 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                     }
                 }
                 TrayCommand::CheckForUpdates => {
-                    tokio::spawn(async {
+                    let update_tx = tray_cmd_tx2.clone();
+                    tokio::spawn(async move {
                         match update::check_for_updates().await {
                             Some((version, url)) => {
                                 let body = format!("{} {version}\n{url}", i18n::t("notif_update_available"));
                                 tray::send_notification_public(&body);
+                                let _ = update_tx.send(TrayCommand::ShowDownloadButton(version));
                             }
                             None => {
                                 tray::send_notification_public(i18n::t("notif_up_to_date"));
                             }
                         }
                     });
+                }
+                TrayCommand::DownloadUpdate(tag) => {
+                    tokio::spawn(async move {
+                        match update::download_and_install(&tag).await {
+                            Ok(()) => {
+                                tray::send_notification_public(
+                                    "Update installed — restart to apply",
+                                );
+                            }
+                            Err(e) => {
+                                error!("update download failed: {e}");
+                                tray::send_notification_public(&format!(
+                                    "Update failed: {e}"
+                                ));
+                            }
+                        }
+                    });
+                }
+                TrayCommand::ShowDownloadButton(tag) => {
+                    tray.show_download_update(&tag);
                 }
                 TrayCommand::Uninstall => {
                     match uninstall::confirm_uninstall() {
