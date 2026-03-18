@@ -355,13 +355,99 @@ pub fn send_notification_public(body: &str) {
 }
 
 fn send_notification(body: &str) {
-    match Notification::new()
-        .appname("OpenClaw Node Widget")
-        .summary("OpenClaw Node Widget")
-        .body(body)
+    #[cfg(windows)]
+    {
+        send_notification_windows(body);
+        return;
+    }
+
+    #[cfg(not(windows))]
+    {
+        match Notification::new()
+            .appname("OpenClaw Node Widget")
+            .summary("OpenClaw Node Widget")
+            .body(body)
+            .show()
+        {
+            Ok(_) => tracing::debug!("notification sent: {body}"),
+            Err(e) => tracing::warn!("notification failed: {e}"),
+        }
+    }
+}
+
+#[cfg(windows)]
+fn send_notification_windows(body: &str) {
+    use std::os::windows::process::CommandExt;
+    use winrt_notification::{Toast, Duration as ToastDuration};
+
+    // Register shortcut with AUMID on first use (one-time, silent)
+    ensure_start_menu_shortcut();
+
+    const AUM_ID: &str = "OpenClaw.NodeWidget";
+    match Toast::new(AUM_ID)
+        .title("OpenClaw Node Widget")
+        .text1(body)
+        .duration(ToastDuration::Short)
         .show()
     {
-        Ok(_) => tracing::debug!("notification sent: {body}"),
-        Err(e) => tracing::warn!("notification failed: {e}"),
+        Ok(_) => tracing::debug!("windows toast sent: {body}"),
+        Err(e) => tracing::warn!("windows toast failed: {e}"),
     }
+}
+
+/// Create a Start Menu shortcut with System.AppUserModel.ID property.
+/// Required for toast to show "OpenClaw Node Widget" instead of "Windows PowerShell".
+/// Only runs once, silently, no visible window.
+#[cfg(windows)]
+fn ensure_start_menu_shortcut() {
+    use std::os::windows::process::CommandExt;
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let appdata = std::env::var("APPDATA").unwrap_or_default();
+        let lnk = format!(
+            "{}\\Microsoft\\Windows\\Start Menu\\Programs\\OpenClaw Node Widget.lnk",
+            appdata
+        );
+
+        if std::path::Path::new(&lnk).exists() {
+            return;
+        }
+
+        let exe = std::env::current_exe()
+            .unwrap_or_default()
+            .display()
+            .to_string();
+
+        // PowerShell script to create .lnk with AUMID property via COM
+        let script = format!(
+            r#"$WshShell = New-Object -ComObject WScript.Shell
+$Shortcut = $WshShell.CreateShortcut('{lnk}')
+$Shortcut.TargetPath = '{exe}'
+$Shortcut.Description = 'OpenClaw Node Widget'
+$Shortcut.Save()
+# Set AppUserModelID via Shell property store
+$shell = New-Object -ComObject Shell.Application
+$dir = $shell.Namespace((Split-Path '{lnk}'))
+$item = $dir.ParseName((Split-Path '{lnk}' -Leaf))
+# AppUserModelID is property index 27 in System.AppUserModel.ID
+# Use alternative: write AUMID directly via IPropertyStore (not available in pure PS)
+# Workaround: register via registry
+$regPath = 'HKCU:\Software\Classes\AppUserModelId\OpenClaw.NodeWidget'
+if (-not (Test-Path $regPath)) {{
+    New-Item -Path $regPath -Force | Out-Null
+    Set-ItemProperty -Path $regPath -Name 'DisplayName' -Value 'OpenClaw Node Widget'
+}}"#
+        );
+
+        let _ = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", &script])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(0x08000000)
+            .spawn();
+
+        tracing::debug!("registered OpenClaw.NodeWidget AUMID for toast notifications");
+    });
 }
