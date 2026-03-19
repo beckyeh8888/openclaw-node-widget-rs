@@ -30,6 +30,7 @@ pub enum TrayCommand {
     CheckForUpdates,
     DownloadUpdate(String),
     ShowDownloadButton(String),
+    OpenChat,
     CopyDiagnostics,
     Uninstall,
     Exit,
@@ -67,6 +68,7 @@ pub struct TrayState {
     download_update_item: MenuItem,
     download_update_id: MenuId,
     pending_update_tag: Option<String>,
+    chat_id: MenuId,
     copy_diagnostics_id: MenuId,
     uninstall_id: MenuId,
     exit_id: MenuId,
@@ -168,6 +170,7 @@ impl TrayState {
         };
         let tailscale_item = MenuItem::new(ts_label, false, None);
         let latency_item = MenuItem::new(t("latency_na"), false, None);
+        let chat_item = MenuItem::new(format!("\u{1F4AC} {}", t("chat")), true, None);
         let refresh_item = MenuItem::new(t("refresh"), true, None);
         let restart_item = MenuItem::new(t("restart_node"), true, None);
         let stop_item = MenuItem::new(t("stop_node"), true, None);
@@ -197,6 +200,7 @@ impl TrayState {
         a(&restart_item)?;
         a(&stop_item)?;
         a(&sep())?;
+        a(&chat_item)?;
         a(&open_gateway_item)?;
         a(&view_logs_item)?;
         a(&sep())?;
@@ -220,6 +224,7 @@ impl TrayState {
             .build()
             .map_err(|e| AppError::Tray(e.to_string()))?;
 
+        let chat_id = chat_item.id().clone();
         let refresh_id = refresh_item.id().clone();
         let restart_id = restart_item.id().clone();
         let stop_id = stop_item.id().clone();
@@ -254,6 +259,7 @@ impl TrayState {
             download_update_item,
             download_update_id,
             pending_update_tag: None,
+            chat_id,
             copy_diagnostics_id,
             uninstall_id,
             exit_id,
@@ -608,6 +614,8 @@ impl TrayState {
             } else {
                 return;
             }
+        } else if id == self.chat_id {
+            TrayCommand::OpenChat
         } else if id == self.copy_diagnostics_id {
             TrayCommand::CopyDiagnostics
         } else if id == self.uninstall_id {

@@ -363,6 +363,9 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                         }
                     });
                 }
+                TrayCommand::OpenChat => {
+                    info!("chat window requested (not yet wired to gateway)");
+                }
                 TrayCommand::CopyDiagnostics => {
                     let conns = config.effective_connections();
                     let diag = tray.collect_diagnostics(&conns);
