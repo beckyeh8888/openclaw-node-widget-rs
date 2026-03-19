@@ -808,6 +808,21 @@ fn pem_wrap(label: &str, der: &[u8]) -> String {
     out
 }
 
+#[derive(Debug)]
+pub enum GatewayCommand {
+    SendChat {
+        message: String,
+        session_key: Option<String>,
+    },
+    ListSessions,
+}
+
+#[derive(Debug, Clone)]
+pub struct ChatSessionInfo {
+    pub key: String,
+    pub name: String,
+}
+
 fn pem_decode(label: &str, pem: &str) -> Result<Vec<u8>, String> {
     let begin = format!("-----BEGIN {label}-----");
     let end = format!("-----END {label}-----");

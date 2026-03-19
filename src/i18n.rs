@@ -289,6 +289,14 @@ fn en<'a>(key: &'a str) -> &'a str {
         "latency_na" => "Latency: N/A",
         "latency_warning" => "High latency detected",
 
+        // Chat
+        "chat" => "Chat",
+        "chat_send" => "Send",
+        "chat_placeholder" => "Type a message...",
+        "chat_empty" => "No messages yet",
+        "chat_typing" => "Typing...",
+        "chat_not_connected" => "Not connected",
+
         _ => key,
     }
 }
@@ -409,6 +417,13 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "latency_na" => "延遲: 無",
         "latency_warning" => "偵測到高延遲",
 
+        "chat" => "對話",
+        "chat_send" => "發送",
+        "chat_placeholder" => "輸入訊息...",
+        "chat_empty" => "尚無訊息",
+        "chat_typing" => "輸入中...",
+        "chat_not_connected" => "未連線",
+
         _ => return None,
     })
 }
@@ -528,6 +543,13 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "latency_label" => "延迟: ",
         "latency_na" => "延迟: 无",
         "latency_warning" => "检测到高延迟",
+
+        "chat" => "对话",
+        "chat_send" => "发送",
+        "chat_placeholder" => "输入消息...",
+        "chat_empty" => "暂无消息",
+        "chat_typing" => "输入中...",
+        "chat_not_connected" => "未连接",
 
         _ => return None,
     })
