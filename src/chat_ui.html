@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenClaw Chat</title>
+<title>OpenClaw</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body {
@@ -15,9 +15,51 @@ html, body {
 }
 body {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
 }
 
+/* ── Sidebar ─────────────────────────────────────────── */
+#sidebar {
+  width: 48px;
+  background: #0f0f23;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 4px;
+  border-right: 1px solid #2d2d44;
+  flex-shrink: 0;
+}
+.nav-btn {
+  width: 38px; height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  font-size: 18px;
+  cursor: pointer;
+  transition: background 0.15s;
+  color: #888;
+}
+.nav-btn:hover { background: #1a1a2e; color: #fff; }
+.nav-btn.active { background: #1a1a2e; color: #fff; box-shadow: inset 3px 0 0 #0084ff; }
+
+/* ── Main content area ───────────────────────────────── */
+#mainContent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* ── Pages ───────────────────────────────────────────── */
+.page { display: none; flex-direction: column; flex: 1; overflow: hidden; }
+.page.active { display: flex; }
+
+/* ── Chat page (preserved) ───────────────────────────── */
 #header {
   background: #16213e;
   padding: 10px 16px;
@@ -228,34 +270,286 @@ body {
 }
 #sendBtn:hover { background: #0073e6; }
 #sendBtn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Dashboard page ──────────────────────────────────── */
+.dash-header {
+  background: #16213e;
+  padding: 12px 16px;
+  border-bottom: 1px solid #2d2d44;
+  font-size: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.dash-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+.dash-scroll::-webkit-scrollbar { width: 5px; }
+.dash-scroll::-webkit-scrollbar-thumb { background: #3d3d5c; border-radius: 3px; }
+
+.plugin-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.plugin-card {
+  background: #16213e;
+  border: 1px solid #2d2d44;
+  border-radius: 10px;
+  padding: 12px;
+  min-width: 140px;
+  flex: 1;
+}
+.plugin-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.connected { background: #44ff44; }
+.status-dot.disconnected { background: #ff4444; }
+.status-dot.reconnecting { background: #ffaa00; }
+.status-dot.error { background: #ff4444; }
+.plugin-card-name { font-size: 14px; font-weight: 600; }
+.plugin-card-type { font-size: 11px; color: #888; }
+.plugin-card-latency { font-size: 12px; color: #7eb8ff; margin-top: 2px; }
+.plugin-card-uptime { font-size: 11px; color: #666; margin-top: 1px; }
+.plugin-card-status-text { font-size: 11px; margin-top: 2px; }
+.plugin-card-status-text.connected { color: #44ff44; }
+.plugin-card-status-text.disconnected { color: #ff4444; }
+
+.dash-section {
+  background: #16213e;
+  border: 1px solid #2d2d44;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.dash-section-title {
+  font-size: 12px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+.dash-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 3px 0;
+}
+.dash-row-label { color: #888; }
+.dash-row-value { color: #fff; }
+
+/* Sparkline chart */
+.sparkline {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 40px;
+  margin-top: 6px;
+}
+.sparkline-bar {
+  display: inline-block;
+  width: 3px;
+  background: #0084ff;
+  border-radius: 1px;
+  min-height: 2px;
+  transition: height 0.2s;
+}
+.sparkline-stats {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: #888;
+  margin-top: 4px;
+}
+
+/* ── Logs page ───────────────────────────────────────── */
+.logs-header {
+  background: #16213e;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #2d2d44;
+  flex-shrink: 0;
+}
+.logs-title {
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.logs-filter {
+  background: #2d2d44;
+  color: #fff;
+  border: 1px solid #3d3d5c;
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+.logs-filter option { background: #2d2d44; }
+.logs-search {
+  flex: 1;
+  background: #2d2d44;
+  border: 1px solid #3d3d5c;
+  border-radius: 8px;
+  padding: 4px 10px;
+  color: #fff;
+  font-size: 12px;
+  outline: none;
+}
+.logs-search::placeholder { color: #666; }
+
+.logs-scroll {
+  flex: 1;
+  overflow-y: auto;
+  font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.logs-scroll::-webkit-scrollbar { width: 5px; }
+.logs-scroll::-webkit-scrollbar-thumb { background: #3d3d5c; border-radius: 3px; }
+
+.log-entry {
+  padding: 2px 16px;
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid rgba(45,45,68,0.3);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.log-entry:hover { background: rgba(255,255,255,0.03); }
+.log-ts { color: #666; white-space: nowrap; flex-shrink: 0; }
+.log-level { font-weight: 600; width: 40px; flex-shrink: 0; text-align: center; }
+.log-level.INFO { color: #44ff44; }
+.log-level.WARN { color: #ffaa00; }
+.log-level.ERROR { color: #ff4444; }
+.log-source { color: #7eb8ff; white-space: nowrap; flex-shrink: 0; }
+.log-msg { color: #ccc; word-break: break-all; flex: 1; }
+
+.logs-footer {
+  background: #16213e;
+  padding: 6px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #2d2d44;
+  font-size: 11px;
+  color: #888;
+  flex-shrink: 0;
+}
+.logs-footer-btn {
+  background: #2d2d44;
+  border: 1px solid #3d3d5c;
+  color: #fff;
+  border-radius: 6px;
+  padding: 3px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.logs-footer-btn:hover { background: #3d3d5c; }
 </style>
 </head>
 <body>
 
-<div id="header">
-  <span class="header-title">🤖 <span id="headerChat">Chat</span></span>
-  <select id="sessionSelect"><option value="">main</option></select>
-  <span id="connectionStatus" class="status-disconnected">Not connected</span>
+<!-- Sidebar -->
+<div id="sidebar">
+  <button class="nav-btn active" data-page="chat" title="Chat">💬</button>
+  <button class="nav-btn" data-page="dashboard" title="Dashboard">📊</button>
+  <button class="nav-btn" data-page="logs" title="Logs">📋</button>
 </div>
 
-<div id="messages">
-  <div class="empty-state" id="emptyState">No messages yet</div>
-</div>
+<div id="mainContent">
 
-<div id="typingIndicator">
-  <div class="dot"></div><div class="dot"></div><div class="dot"></div>
-</div>
+  <!-- ── Chat Page ──────────────────────────────────── -->
+  <div id="page-chat" class="page active">
+    <div id="header">
+      <span class="header-title">🤖 <span id="headerChat">Chat</span></span>
+      <select id="sessionSelect"><option value="">main</option></select>
+      <span id="connectionStatus" class="status-disconnected">Not connected</span>
+    </div>
 
-<div id="imagePreview">
-  <img id="previewImg" src="">
-  <button class="remove-preview" onclick="clearPreview()">✕</button>
-</div>
+    <div id="messages">
+      <div class="empty-state" id="emptyState">No messages yet</div>
+    </div>
 
-<div id="inputBar">
-  <button id="uploadBtn" title="Upload image">📎</button>
-  <input type="text" id="messageInput" placeholder="Type a message..." disabled>
-  <button id="sendBtn" disabled>▶</button>
-  <input type="file" id="fileInput" accept="image/*" style="display:none">
+    <div id="typingIndicator">
+      <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+    </div>
+
+    <div id="imagePreview">
+      <img id="previewImg" src="">
+      <button class="remove-preview" onclick="clearPreview()">✕</button>
+    </div>
+
+    <div id="inputBar">
+      <button id="uploadBtn" title="Upload image">📎</button>
+      <input type="text" id="messageInput" placeholder="Type a message..." disabled>
+      <button id="sendBtn" disabled>▶</button>
+      <input type="file" id="fileInput" accept="image/*" style="display:none">
+    </div>
+  </div>
+
+  <!-- ── Dashboard Page ─────────────────────────────── -->
+  <div id="page-dashboard" class="page">
+    <div class="dash-header">📊 Dashboard</div>
+    <div class="dash-scroll">
+      <div id="pluginCards" class="plugin-cards">
+        <div class="empty-state" id="dashEmpty" style="padding:30px 0;">No plugins connected</div>
+      </div>
+
+      <div class="dash-section">
+        <div class="dash-section-title">Node Information</div>
+        <div class="dash-row"><span class="dash-row-label">Node</span><span class="dash-row-value" id="dashNodeName">—</span></div>
+        <div class="dash-row"><span class="dash-row-label">Platform</span><span class="dash-row-value" id="dashPlatform">—</span></div>
+        <div class="dash-row"><span class="dash-row-label">Uptime</span><span class="dash-row-value" id="dashUptime">—</span></div>
+        <div class="dash-row"><span class="dash-row-label">Version</span><span class="dash-row-value" id="dashVersion">—</span></div>
+      </div>
+
+      <div class="dash-section">
+        <div class="dash-section-title">Latency (last 30 samples)</div>
+        <div id="sparkline" class="sparkline"></div>
+        <div class="sparkline-stats">
+          <span>avg: <span id="latencyAvg">—</span></span>
+          <span>max: <span id="latencyMax">—</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Logs Page ──────────────────────────────────── -->
+  <div id="page-logs" class="page">
+    <div class="logs-header">
+      <span class="logs-title">📋 Logs</span>
+      <select id="logLevelFilter" class="logs-filter">
+        <option value="">All</option>
+        <option value="INFO">Info</option>
+        <option value="WARN">Warn</option>
+        <option value="ERROR">Error</option>
+      </select>
+      <input type="text" id="logSearch" class="logs-search" placeholder="Search logs...">
+    </div>
+    <div id="logEntries" class="logs-scroll"></div>
+    <div class="logs-footer">
+      <span id="logCount">0 entries</span>
+      <div style="display:flex;gap:6px;">
+        <button class="logs-footer-btn" id="logClearBtn">Clear</button>
+        <button class="logs-footer-btn" id="logExportBtn">Export</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -285,6 +579,9 @@ var I18N = {
 var lang = "en";
 var connected = false;
 var attachment = null;
+var currentPage = "chat";
+var allLogEntries = [];
+var logAutoScroll = true;
 
 function t(k) {
   return (I18N[lang] && I18N[lang][k]) || I18N.en[k] || k;
@@ -300,6 +597,28 @@ function applyI18n() {
   st.textContent = connected ? t("chat_connected") : t("chat_not_connected");
 }
 
+// ── Navigation ──────────────────────────────────────────
+function navigateTo(page) {
+  currentPage = page;
+  var pages = document.querySelectorAll(".page");
+  for (var i = 0; i < pages.length; i++) pages[i].classList.remove("active");
+  var btns = document.querySelectorAll(".nav-btn");
+  for (var i = 0; i < btns.length; i++) btns[i].classList.remove("active");
+
+  var target = document.getElementById("page-" + page);
+  if (target) target.classList.add("active");
+  var btn = document.querySelector('.nav-btn[data-page="' + page + '"]');
+  if (btn) btn.classList.add("active");
+
+  window.ipc.postMessage(JSON.stringify({ type: "navigate", page: page }));
+}
+
+var navBtns = document.querySelectorAll(".nav-btn");
+for (var i = 0; i < navBtns.length; i++) {
+  navBtns[i].addEventListener("click", function() { navigateTo(this.dataset.page); });
+}
+
+// ── Chat functions (preserved) ──────────────────────────
 function fmtTime(d) {
   var h = d.getHours(), m = d.getMinutes();
   var ampm = h >= 12 ? "PM" : "AM";
@@ -436,6 +755,158 @@ function handleFile(f) {
   r.readAsDataURL(f);
 }
 
+// ── Dashboard functions ─────────────────────────────────
+function fmtUptime(secs) {
+  if (!secs && secs !== 0) return "—";
+  var h = Math.floor(secs / 3600);
+  var m = Math.floor((secs % 3600) / 60);
+  if (h > 0) return h + "h " + m + "m";
+  return m + "m";
+}
+
+function updateDashboard(data) {
+  if (!data) return;
+
+  // Plugin cards
+  var container = document.getElementById("pluginCards");
+  var dashEmpty = document.getElementById("dashEmpty");
+  if (data.plugins && data.plugins.length > 0) {
+    if (dashEmpty) dashEmpty.style.display = "none";
+    container.innerHTML = "";
+    for (var i = 0; i < data.plugins.length; i++) {
+      var p = data.plugins[i];
+      var card = document.createElement("div");
+      card.className = "plugin-card";
+      card.innerHTML =
+        '<div class="plugin-card-header">' +
+          '<span class="status-dot ' + (p.status || 'disconnected') + '"></span>' +
+          '<span class="plugin-card-name">' + escHtml(p.icon + ' ' + p.name) + '</span>' +
+        '</div>' +
+        '<div class="plugin-card-type">' + escHtml(p.plugin_type) + '</div>' +
+        (p.latency_ms != null ? '<div class="plugin-card-latency">' + p.latency_ms + 'ms</div>' : '') +
+        (p.uptime_secs != null ? '<div class="plugin-card-uptime">\u2191 ' + fmtUptime(p.uptime_secs) + '</div>' : '') +
+        '<div class="plugin-card-status-text ' + (p.status || 'disconnected') + '">' +
+          (p.status === 'connected' ? 'Connected' : p.status === 'reconnecting' ? 'Reconnecting...' : 'Disconnected') +
+        '</div>';
+      container.appendChild(card);
+    }
+  } else {
+    if (dashEmpty) dashEmpty.style.display = "flex";
+  }
+
+  // Node info
+  document.getElementById("dashNodeName").textContent = data.node_name || "—";
+  document.getElementById("dashPlatform").textContent = data.platform || "—";
+  document.getElementById("dashUptime").textContent = fmtUptime(data.uptime_secs);
+  document.getElementById("dashVersion").textContent = data.version || "—";
+
+  // Sparkline
+  var sparkEl = document.getElementById("sparkline");
+  var history = data.latency_history || [];
+  if (history.length > 0) {
+    var maxVal = Math.max.apply(null, history) || 1;
+    sparkEl.innerHTML = "";
+    for (var j = 0; j < history.length; j++) {
+      var bar = document.createElement("span");
+      bar.className = "sparkline-bar";
+      bar.style.height = Math.max(2, (history[j] / maxVal) * 36) + "px";
+      bar.title = history[j] + "ms";
+      sparkEl.appendChild(bar);
+    }
+    var sum = 0;
+    for (var k = 0; k < history.length; k++) sum += history[k];
+    document.getElementById("latencyAvg").textContent = Math.round(sum / history.length) + "ms";
+    document.getElementById("latencyMax").textContent = Math.max.apply(null, history) + "ms";
+  }
+}
+
+// ── Logs functions ──────────────────────────────────────
+function escHtml(s) {
+  var d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function updateLogs(entries) {
+  if (!entries) return;
+  allLogEntries = entries;
+  renderLogs();
+}
+
+function renderLogs() {
+  var container = document.getElementById("logEntries");
+  var levelFilter = document.getElementById("logLevelFilter").value;
+  var search = document.getElementById("logSearch").value.toLowerCase();
+
+  var filtered = allLogEntries.filter(function(e) {
+    if (levelFilter && e.level !== levelFilter) return false;
+    if (search && e.message.toLowerCase().indexOf(search) === -1 &&
+        e.source.toLowerCase().indexOf(search) === -1) return false;
+    return true;
+  });
+
+  // Check if user has scrolled up
+  var wasAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 30;
+
+  container.innerHTML = "";
+  for (var i = 0; i < filtered.length; i++) {
+    var e = filtered[i];
+    var row = document.createElement("div");
+    row.className = "log-entry";
+    row.setAttribute("data-idx", i);
+    row.innerHTML =
+      '<span class="log-ts">' + escHtml(e.timestamp) + '</span>' +
+      '<span class="log-level ' + escHtml(e.level) + '">' + escHtml(e.level) + '</span>' +
+      '<span class="log-source">[' + escHtml(e.source) + ']</span>' +
+      '<span class="log-msg">' + escHtml(e.message) + '</span>';
+    row.addEventListener("click", (function(entry) {
+      return function() { copyLogEntry(entry); };
+    })(e));
+    container.appendChild(row);
+  }
+
+  document.getElementById("logCount").textContent = filtered.length + " entries";
+
+  // Auto-scroll if was at bottom
+  if (wasAtBottom || logAutoScroll) {
+    requestAnimationFrame(function() {
+      container.scrollTop = container.scrollHeight;
+    });
+  }
+}
+
+function copyLogEntry(entry) {
+  var text = entry.timestamp + " " + entry.level + " [" + entry.source + "] " + entry.message;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text);
+  }
+}
+
+// Log scroll detection: stop auto-scroll when user scrolls up
+document.getElementById("logEntries").addEventListener("scroll", function() {
+  var el = this;
+  logAutoScroll = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+});
+
+document.getElementById("logLevelFilter").addEventListener("change", renderLogs);
+document.getElementById("logSearch").addEventListener("input", renderLogs);
+
+document.getElementById("logClearBtn").addEventListener("click", function() {
+  allLogEntries = [];
+  renderLogs();
+  window.ipc.postMessage(JSON.stringify({ type: "clearLogs" }));
+});
+
+document.getElementById("logExportBtn").addEventListener("click", function() {
+  var text = allLogEntries.map(function(e) {
+    return e.timestamp + " " + e.level + " [" + e.source + "] " + e.message;
+  }).join("\n");
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text);
+  }
+});
+
+// ── Init ────────────────────────────────────────────────
 function init(data) {
   lang = data.lang || "en";
   connected = data.connected || false;
@@ -447,9 +918,12 @@ function init(data) {
     for (var i = 0; i < data.messages.length; i++) addMessage(data.messages[i]);
   }
   if (data.waitingForReply) setTyping(true);
+  if (data.dashboard) updateDashboard(data.dashboard);
+  if (data.logs && data.logs.length) updateLogs(data.logs);
+  if (data.currentPage && data.currentPage !== "chat") navigateTo(data.currentPage);
 }
 
-// Events
+// Chat events
 document.getElementById("sendBtn").addEventListener("click", sendMsg);
 document.getElementById("messageInput").addEventListener("keydown", function(e) {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); }

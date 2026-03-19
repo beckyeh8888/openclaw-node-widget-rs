@@ -4,6 +4,7 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tracing::warn;
 
+use crate::dashboard::{DashboardData, LogBuffer, LogEntry, LogLevel};
 use crate::gateway::{ChatAttachment, ChatSessionInfo, GatewayCommand};
 use crate::i18n;
 use crate::plugin::PluginCommand;
@@ -45,6 +46,9 @@ pub struct ChatState {
     pub window_open: bool,
     pub window_focused: bool,
     pub waiting_for_reply: bool,
+    pub dashboard_data: DashboardData,
+    pub log_buffer: LogBuffer,
+    pub current_page: String,
 }
 
 impl ChatState {
@@ -58,7 +62,20 @@ impl ChatState {
             window_open: false,
             window_focused: true,
             waiting_for_reply: false,
+            dashboard_data: DashboardData::new(),
+            log_buffer: LogBuffer::new(),
+            current_page: "chat".to_string(),
         }
+    }
+
+    /// Add a log entry to the buffer.
+    pub fn add_log(&mut self, level: LogLevel, source: &str, message: &str) {
+        self.log_buffer.push(LogEntry {
+            timestamp: crate::dashboard::now_timestamp(),
+            level,
+            source: source.to_string(),
+            message: message.to_string(),
+        });
     }
 }
 
@@ -211,6 +228,20 @@ fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
         .map(|s| json!({"key": s.key, "name": s.name}))
         .collect();
 
+    let log_entries: Vec<serde_json::Value> = state
+        .log_buffer
+        .entries()
+        .iter()
+        .map(|e| {
+            json!({
+                "timestamp": e.timestamp,
+                "level": format!("{}", e.level),
+                "source": e.source,
+                "message": e.message,
+            })
+        })
+        .collect();
+
     json!({
         "lang": lang,
         "connected": state.connected,
@@ -218,6 +249,9 @@ fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
         "sessions": sessions,
         "selectedSession": state.selected_session,
         "waitingForReply": state.waiting_for_reply,
+        "dashboard": state.dashboard_data,
+        "logs": log_entries,
+        "currentPage": state.current_page,
     })
     .to_string()
 }
@@ -300,6 +334,31 @@ fn handle_ipc_message(
         "listSessions" => {
             let _ = cmd_tx.send(PluginCommand::ListSessions);
         }
+        "getDashboard" => {
+            // Dashboard data is pushed from Rust side; this is a manual refresh request.
+            // No-op: the event loop will push the latest data on next tick.
+        }
+        "getLogs" => {
+            // Logs are pushed; this acknowledges the JS side is ready.
+        }
+        "filterLogs" => {
+            // Filtering is done client-side in JS; no Rust action needed.
+        }
+        "clearLogs" => {
+            if let Ok(mut state) = chat_state.lock() {
+                state.log_buffer.clear();
+            }
+        }
+        "navigate" => {
+            let page = msg
+                .get("page")
+                .and_then(|v| v.as_str())
+                .unwrap_or("chat")
+                .to_string();
+            if let Ok(mut state) = chat_state.lock() {
+                state.current_page = page;
+            }
+        }
         _ => {
             warn!("unknown IPC message type: {msg_type}");
         }
@@ -360,6 +419,37 @@ fn process_inbox_to_webview(
                 let _ = webview.evaluate_script("setTyping(false)");
             }
         }
+    }
+
+    // Push dashboard data to WebView if on dashboard page
+    if state.current_page == "dashboard" {
+        if let Ok(dashboard_json) = serde_json::to_string(&state.dashboard_data) {
+            let _ = webview.evaluate_script(&format!(
+                "if(typeof updateDashboard==='function')updateDashboard({})",
+                dashboard_json
+            ));
+        }
+    }
+
+    // Push latest log entries to WebView if on logs page
+    if state.current_page == "logs" {
+        let entries: Vec<serde_json::Value> = state
+            .log_buffer
+            .entries()
+            .iter()
+            .map(|e| {
+                json!({
+                    "timestamp": e.timestamp,
+                    "level": format!("{}", e.level),
+                    "source": e.source,
+                    "message": e.message,
+                })
+            })
+            .collect();
+        let _ = webview.evaluate_script(&format!(
+            "if(typeof updateLogs==='function')updateLogs({})",
+            json!(entries)
+        ));
     }
 }
 

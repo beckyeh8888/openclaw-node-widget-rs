@@ -4,6 +4,7 @@
 mod autostart;
 mod chat;
 mod config;
+pub mod dashboard;
 mod error;
 mod gateway;
 mod i18n;
@@ -209,6 +210,9 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     let (gateway_monitor_tx, gateway_monitor_rx) = mpsc::unbounded_channel();
 
     let chat_state = Arc::new(Mutex::new(chat::ChatState::new()));
+    let start_time = std::time::Instant::now();
+    let mut latency_tracker = dashboard::LatencyTracker::new();
+    let mut last_dashboard_push = std::time::Instant::now();
 
     // ── Build PluginRegistry from config ────────────────────────────
     let mut plugin_registry = PluginRegistry::new();
@@ -368,6 +372,78 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
         while let Ok(event) = gateway_event_rx.try_recv() {
             tray.handle_gateway_event(&event)?;
             let _ = gateway_monitor_tx.send(event.clone());
+
+            // Track latency and push log entries
+            match &event {
+                gateway::GatewayEvent::Latency { connection_name, ms } => {
+                    latency_tracker.push(*ms);
+                    if let Ok(mut cs) = chat_state.lock() {
+                        cs.add_log(
+                            dashboard::LogLevel::Info,
+                            connection_name,
+                            &format!("Latency: {}ms", ms),
+                        );
+                    }
+                }
+                gateway::GatewayEvent::Connected { connection_name, .. } => {
+                    if let Ok(mut cs) = chat_state.lock() {
+                        cs.add_log(
+                            dashboard::LogLevel::Info,
+                            connection_name,
+                            "Connected",
+                        );
+                    }
+                }
+                gateway::GatewayEvent::Disconnected { connection_name, reason } => {
+                    if let Ok(mut cs) = chat_state.lock() {
+                        cs.add_log(
+                            dashboard::LogLevel::Warn,
+                            connection_name,
+                            &format!("Disconnected: {}", reason),
+                        );
+                    }
+                }
+                gateway::GatewayEvent::Error { connection_name, message } => {
+                    if let Ok(mut cs) = chat_state.lock() {
+                        cs.add_log(
+                            dashboard::LogLevel::Error,
+                            connection_name,
+                            message,
+                        );
+                    }
+                }
+                gateway::GatewayEvent::NodeStatus { connection_name, online, node_name, .. } => {
+                    if let Ok(mut cs) = chat_state.lock() {
+                        let status = if *online { "online" } else { "offline" };
+                        let name = node_name.as_deref().unwrap_or("unknown");
+                        cs.add_log(
+                            dashboard::LogLevel::Info,
+                            connection_name,
+                            &format!("Node {} is {}", name, status),
+                        );
+                    }
+                }
+            }
+        }
+
+        // Update dashboard data periodically (max 1/sec)
+        if last_dashboard_push.elapsed() >= std::time::Duration::from_secs(1) {
+            let statuses = plugin_registry.plugin_statuses();
+            let plugin_types: Vec<(String, String, String)> = plugin_registry
+                .all()
+                .iter()
+                .map(|p| (p.id().0.clone(), p.plugin_type().to_string(), p.icon().to_string()))
+                .collect();
+            let dash_data = dashboard::build_dashboard_data(
+                &statuses,
+                &plugin_types,
+                &latency_tracker,
+                start_time,
+            );
+            if let Ok(mut cs) = chat_state.lock() {
+                cs.dashboard_data = dash_data;
+            }
+            last_dashboard_push = std::time::Instant::now();
         }
 
         // Chat notifications: when chat window is NOT open, notify on new replies
