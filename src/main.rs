@@ -303,6 +303,39 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
             let _ = gateway_monitor_tx.send(event.clone());
         }
 
+        // Chat notifications: when chat window is NOT open, notify on new replies
+        if let Ok(mut cs) = chat_state.lock() {
+            if !cs.window_open {
+                // Extract reply events from inbox
+                let mut replies = Vec::new();
+                let mut remaining = Vec::new();
+                for event in cs.inbox.drain(..) {
+                    match event {
+                        chat::ChatInbound::Reply { text, agent_name } => {
+                            replies.push((text, agent_name));
+                        }
+                        other => remaining.push(other),
+                    }
+                }
+                cs.inbox = remaining;
+
+                for (text, agent_name) in replies {
+                    let agent = agent_name.as_deref().unwrap_or("Agent");
+                    let preview: String = text.chars().take(100).collect();
+                    tray::send_notification_public(&format!("{agent} replied: {preview}"));
+                    let name = agent_name.unwrap_or_else(|| "Agent".to_string());
+                    cs.messages.push(chat::ChatMessage {
+                        sender: chat::ChatSender::Agent(name),
+                        text,
+                    });
+                    while cs.messages.len() > 50 {
+                        cs.messages.remove(0);
+                    }
+                    cs.waiting_for_reply = false;
+                }
+            }
+        }
+
         while let Ok(update) = status_rx.try_recv() {
             tray.update_status(
                 update.node_status,
