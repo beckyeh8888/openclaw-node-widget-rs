@@ -585,10 +585,8 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
                     GatewayCommand::SendChat { message, session_key } => {
                         let req_id = Uuid::new_v4().to_string();
                         let idempotency_key = Uuid::new_v4().to_string();
-                        let mut params = json!({ "message": message, "idempotencyKey": idempotency_key });
-                        if let Some(sk) = session_key {
-                            params["sessionKey"] = json!(sk);
-                        }
+                        let sk = session_key.unwrap_or_else(|| "main".to_string());
+                        let params = json!({ "message": message, "idempotencyKey": idempotency_key, "sessionKey": sk });
                         let frame = json!({
                             "type": "req",
                             "id": req_id,
