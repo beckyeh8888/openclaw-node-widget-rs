@@ -329,3 +329,427 @@ fn process_inbox_to_webview(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gateway::{ChatSessionInfo, GatewayCommand};
+    use std::sync::{Arc, Mutex};
+
+    // ── ChatState initialization ─────────────────────────────────────
+
+    #[test]
+    fn given_new_chat_state_then_defaults_are_correct() {
+        let state = ChatState::new();
+
+        assert!(state.messages.is_empty(), "messages should start empty");
+        assert!(state.inbox.is_empty(), "inbox should start empty");
+        assert!(state.sessions.is_empty(), "sessions should start empty");
+        assert_eq!(state.selected_session, None, "no session selected by default");
+        assert!(!state.connected, "should start disconnected");
+        assert!(!state.window_open, "window should start closed");
+        assert!(state.window_focused, "window_focused defaults to true");
+        assert!(!state.waiting_for_reply, "not waiting for reply initially");
+    }
+
+    // ── Adding messages ──────────────────────────────────────────────
+
+    #[test]
+    fn given_empty_state_when_user_sends_message_then_it_is_stored() {
+        let mut state = ChatState::new();
+
+        state.messages.push(ChatMessage {
+            sender: ChatSender::User,
+            text: "hello".to_string(),
+        });
+
+        assert_eq!(state.messages.len(), 1);
+        assert_eq!(state.messages[0].text, "hello");
+        assert_eq!(state.messages[0].sender, ChatSender::User);
+    }
+
+    #[test]
+    fn given_empty_state_when_agent_replies_then_sender_has_name() {
+        let mut state = ChatState::new();
+
+        state.messages.push(ChatMessage {
+            sender: ChatSender::Agent("Claw".to_string()),
+            text: "hi there".to_string(),
+        });
+
+        assert_eq!(state.messages.len(), 1);
+        assert_eq!(
+            state.messages[0].sender,
+            ChatSender::Agent("Claw".to_string())
+        );
+    }
+
+    // ── MAX_MESSAGES limit ───────────────────────────────────────────
+
+    #[test]
+    fn given_full_history_when_new_message_added_then_oldest_is_evicted() {
+        let mut state = ChatState::new();
+
+        // Fill to MAX_MESSAGES
+        for i in 0..MAX_MESSAGES {
+            state.messages.push(ChatMessage {
+                sender: ChatSender::User,
+                text: format!("msg-{i}"),
+            });
+        }
+        assert_eq!(state.messages.len(), MAX_MESSAGES);
+
+        // Simulate what handle_ipc_message does: push + evict
+        state.messages.push(ChatMessage {
+            sender: ChatSender::User,
+            text: "overflow".to_string(),
+        });
+        while state.messages.len() > MAX_MESSAGES {
+            state.messages.remove(0);
+        }
+
+        assert_eq!(state.messages.len(), MAX_MESSAGES);
+        assert_eq!(state.messages[0].text, "msg-1", "msg-0 should be evicted");
+        assert_eq!(
+            state.messages[MAX_MESSAGES - 1].text,
+            "overflow",
+            "newest message should be last"
+        );
+    }
+
+    // ── ChatInbound processing ───────────────────────────────────────
+
+    #[test]
+    fn given_reply_in_inbox_when_processed_then_message_appended_and_waiting_cleared() {
+        let mut state = ChatState::new();
+        state.waiting_for_reply = true;
+        state.inbox.push(ChatInbound::Reply {
+            text: "answer".to_string(),
+            agent_name: Some("Bot".to_string()),
+        });
+
+        // Simulate process_inbox_to_webview logic (without webview)
+        let events: Vec<_> = state.inbox.drain(..).collect();
+        for event in events {
+            if let ChatInbound::Reply { text, agent_name } = event {
+                let name = agent_name.unwrap_or_else(|| "Agent".to_string());
+                state.messages.push(ChatMessage {
+                    sender: ChatSender::Agent(name),
+                    text,
+                });
+                state.waiting_for_reply = false;
+            }
+        }
+
+        assert_eq!(state.messages.len(), 1);
+        assert_eq!(state.messages[0].text, "answer");
+        assert_eq!(
+            state.messages[0].sender,
+            ChatSender::Agent("Bot".to_string())
+        );
+        assert!(!state.waiting_for_reply);
+    }
+
+    #[test]
+    fn given_reply_without_agent_name_then_defaults_to_agent() {
+        let mut state = ChatState::new();
+        state.inbox.push(ChatInbound::Reply {
+            text: "hi".to_string(),
+            agent_name: None,
+        });
+
+        let events: Vec<_> = state.inbox.drain(..).collect();
+        for event in events {
+            if let ChatInbound::Reply { text, agent_name } = event {
+                let name = agent_name.unwrap_or_else(|| "Agent".to_string());
+                state.messages.push(ChatMessage {
+                    sender: ChatSender::Agent(name),
+                    text,
+                });
+            }
+        }
+
+        assert_eq!(
+            state.messages[0].sender,
+            ChatSender::Agent("Agent".to_string())
+        );
+    }
+
+    #[test]
+    fn given_sessions_list_in_inbox_when_processed_then_sessions_updated() {
+        let mut state = ChatState::new();
+        state.inbox.push(ChatInbound::SessionsList {
+            sessions: vec![
+                ChatSessionInfo {
+                    key: "s1".to_string(),
+                    name: "Session 1".to_string(),
+                },
+                ChatSessionInfo {
+                    key: "s2".to_string(),
+                    name: "Session 2".to_string(),
+                },
+            ],
+        });
+
+        let events: Vec<_> = state.inbox.drain(..).collect();
+        for event in events {
+            if let ChatInbound::SessionsList { sessions } = event {
+                state.sessions = sessions;
+            }
+        }
+
+        assert_eq!(state.sessions.len(), 2);
+        assert_eq!(state.sessions[0].key, "s1");
+        assert_eq!(state.sessions[1].name, "Session 2");
+    }
+
+    #[test]
+    fn given_connected_event_in_inbox_then_state_becomes_connected() {
+        let mut state = ChatState::new();
+        assert!(!state.connected);
+
+        state.inbox.push(ChatInbound::Connected);
+        let events: Vec<_> = state.inbox.drain(..).collect();
+        for event in events {
+            if let ChatInbound::Connected = event {
+                state.connected = true;
+            }
+        }
+
+        assert!(state.connected);
+    }
+
+    #[test]
+    fn given_disconnected_event_then_connected_and_waiting_cleared() {
+        let mut state = ChatState::new();
+        state.connected = true;
+        state.waiting_for_reply = true;
+
+        state.inbox.push(ChatInbound::Disconnected);
+        let events: Vec<_> = state.inbox.drain(..).collect();
+        for event in events {
+            if let ChatInbound::Disconnected = event {
+                state.connected = false;
+                state.waiting_for_reply = false;
+            }
+        }
+
+        assert!(!state.connected);
+        assert!(!state.waiting_for_reply);
+    }
+
+    // ── IPC message handling (handle_ipc_message) ────────────────────
+
+    fn setup_ipc() -> (
+        Arc<Mutex<ChatState>>,
+        tokio::sync::mpsc::UnboundedSender<GatewayCommand>,
+        tokio::sync::mpsc::UnboundedReceiver<GatewayCommand>,
+    ) {
+        let state = Arc::new(Mutex::new(ChatState::new()));
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (state, tx, rx)
+    }
+
+    #[test]
+    fn given_send_ipc_then_command_includes_message_and_session_key() {
+        let (state, tx, mut rx) = setup_ipc();
+
+        let body = r#"{"type":"send","message":"hello world","sessionKey":"sess-42"}"#;
+        handle_ipc_message(body, &tx, &state);
+
+        let cmd = rx.try_recv().expect("should receive SendChat command");
+        match cmd {
+            GatewayCommand::SendChat {
+                message,
+                session_key,
+                attachments,
+            } => {
+                assert_eq!(message, "hello world");
+                assert_eq!(session_key, Some("sess-42".to_string()));
+                assert!(attachments.is_none());
+            }
+            _ => panic!("expected SendChat"),
+        }
+
+        // Verify state was updated
+        let s = state.lock().unwrap();
+        assert_eq!(s.messages.len(), 1);
+        assert_eq!(s.messages[0].text, "hello world");
+        assert!(s.waiting_for_reply);
+    }
+
+    #[test]
+    fn given_send_without_session_key_then_falls_back_to_selected_session() {
+        let (state, tx, mut rx) = setup_ipc();
+        state.lock().unwrap().selected_session = Some("my-session".to_string());
+
+        let body = r#"{"type":"send","message":"test"}"#;
+        handle_ipc_message(body, &tx, &state);
+
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            GatewayCommand::SendChat { session_key, .. } => {
+                assert_eq!(session_key, Some("my-session".to_string()));
+            }
+            _ => panic!("expected SendChat"),
+        }
+    }
+
+    #[test]
+    fn given_send_with_no_session_and_no_selected_then_session_key_is_none() {
+        let (state, tx, mut rx) = setup_ipc();
+
+        let body = r#"{"type":"send","message":"test"}"#;
+        handle_ipc_message(body, &tx, &state);
+
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            GatewayCommand::SendChat { session_key, .. } => {
+                assert_eq!(session_key, None);
+            }
+            _ => panic!("expected SendChat"),
+        }
+    }
+
+    #[test]
+    fn given_empty_message_then_send_is_ignored() {
+        let (state, tx, mut rx) = setup_ipc();
+
+        let body = r#"{"type":"send","message":""}"#;
+        handle_ipc_message(body, &tx, &state);
+
+        assert!(rx.try_recv().is_err(), "no command should be sent");
+        assert!(state.lock().unwrap().messages.is_empty());
+    }
+
+    #[test]
+    fn given_send_with_attachments_then_attachments_are_parsed() {
+        let (state, tx, mut rx) = setup_ipc();
+
+        let body = r#"{
+            "type": "send",
+            "message": "see image",
+            "attachments": [
+                {"data": "abc123", "filename": "pic.png", "mimeType": "image/png"}
+            ]
+        }"#;
+        handle_ipc_message(body, &tx, &state);
+
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            GatewayCommand::SendChat { attachments, .. } => {
+                let atts = attachments.expect("should have attachments");
+                assert_eq!(atts.len(), 1);
+                assert_eq!(atts[0].data, "abc123");
+                assert_eq!(atts[0].filename, "pic.png");
+                assert_eq!(atts[0].mime_type, "image/png");
+            }
+            _ => panic!("expected SendChat"),
+        }
+    }
+
+    #[test]
+    fn given_select_session_ipc_then_state_is_updated() {
+        let (state, tx, _rx) = setup_ipc();
+
+        let body = r#"{"type":"selectSession","sessionKey":"new-sess"}"#;
+        handle_ipc_message(body, &tx, &state);
+
+        assert_eq!(
+            state.lock().unwrap().selected_session,
+            Some("new-sess".to_string())
+        );
+    }
+
+    #[test]
+    fn given_list_sessions_ipc_then_command_is_sent() {
+        let (state, tx, mut rx) = setup_ipc();
+
+        let body = r#"{"type":"listSessions"}"#;
+        handle_ipc_message(body, &tx, &state);
+
+        let cmd = rx.try_recv().unwrap();
+        assert!(matches!(cmd, GatewayCommand::ListSessions));
+    }
+
+    #[test]
+    fn given_invalid_json_then_ipc_is_silently_ignored() {
+        let (state, tx, mut rx) = setup_ipc();
+
+        handle_ipc_message("not json at all", &tx, &state);
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn given_unknown_ipc_type_then_no_command_sent() {
+        let (state, tx, mut rx) = setup_ipc();
+
+        let body = r#"{"type":"unknownCmd"}"#;
+        handle_ipc_message(body, &tx, &state);
+
+        assert!(rx.try_recv().is_err());
+    }
+
+    // ── Message limit enforcement via IPC ────────────────────────────
+
+    #[test]
+    fn given_max_messages_when_send_via_ipc_then_oldest_evicted() {
+        let (state, tx, _rx) = setup_ipc();
+
+        // Pre-fill state to MAX_MESSAGES
+        {
+            let mut s = state.lock().unwrap();
+            for i in 0..MAX_MESSAGES {
+                s.messages.push(ChatMessage {
+                    sender: ChatSender::User,
+                    text: format!("old-{i}"),
+                });
+            }
+        }
+
+        let body = r#"{"type":"send","message":"new"}"#;
+        handle_ipc_message(body, &tx, &state);
+
+        let s = state.lock().unwrap();
+        assert_eq!(s.messages.len(), MAX_MESSAGES);
+        assert_eq!(s.messages[0].text, "old-1");
+        assert_eq!(s.messages[MAX_MESSAGES - 1].text, "new");
+    }
+
+    // ── build_init_json ──────────────────────────────────────────────
+
+    #[test]
+    fn given_state_with_messages_then_init_json_contains_them() {
+        let state = Arc::new(Mutex::new(ChatState::new()));
+        {
+            let mut s = state.lock().unwrap();
+            s.connected = true;
+            s.messages.push(ChatMessage {
+                sender: ChatSender::User,
+                text: "hi".to_string(),
+            });
+            s.messages.push(ChatMessage {
+                sender: ChatSender::Agent("Bot".to_string()),
+                text: "hello".to_string(),
+            });
+            s.sessions.push(ChatSessionInfo {
+                key: "main".to_string(),
+                name: "Main".to_string(),
+            });
+            s.selected_session = Some("main".to_string());
+        }
+
+        let json_str = build_init_json(&state);
+        let v: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(v["connected"], true);
+        assert_eq!(v["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(v["messages"][0]["sender"], "user");
+        assert_eq!(v["messages"][0]["text"], "hi");
+        assert_eq!(v["messages"][1]["sender"], "agent");
+        assert_eq!(v["messages"][1]["agentName"], "Bot");
+        assert_eq!(v["sessions"][0]["key"], "main");
+        assert_eq!(v["selectedSession"], "main");
+    }
+}
