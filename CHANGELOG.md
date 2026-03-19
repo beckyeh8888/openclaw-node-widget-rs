@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.8.0] - 2026-03-19
+
+### Added
+- **💬 Chat UI** — Talk to your AI agent directly from the system tray (egui window)
+- **Agent selector** — Dropdown to switch between agents (main, divination, etc.)
+- **Gateway chat protocol** — `chat.send`, `sessions.list`, `chat` event handling via WebSocket
+- **Global hotkey** — Cmd+Shift+O (macOS) / Ctrl+Shift+O (Win/Linux) to open chat
+- **Chat notifications** — Desktop notification when agent replies and chat window is closed
+
 ## [0.7.0] - 2026-03-19
 
 ### Added
