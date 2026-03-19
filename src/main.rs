@@ -200,6 +200,7 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
 
     let (tray_cmd_tx, mut tray_cmd_rx) = mpsc::unbounded_channel();
     let tray_cmd_tx2 = tray_cmd_tx.clone();
+    let tray_cmd_tx_hotkey = tray_cmd_tx.clone();
     let (monitor_cmd_tx, monitor_cmd_rx) = mpsc::unbounded_channel();
     let (status_tx, mut status_rx) = mpsc::unbounded_channel();
     let (gateway_event_tx, mut gateway_event_rx) = mpsc::unbounded_channel();
@@ -245,6 +246,34 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     )?;
     tray.set_gateway_configured(gateway_enabled)?;
 
+    // Register global hotkey: Cmd+Shift+O (macOS) / Ctrl+Shift+O (Win/Linux)
+    let _hotkey_manager = {
+        use global_hotkey::{
+            hotkey::{Code, HotKey, Modifiers},
+            GlobalHotKeyManager,
+        };
+        let manager = GlobalHotKeyManager::new();
+        match manager {
+            Ok(mgr) => {
+                let modifiers = if cfg!(target_os = "macos") {
+                    Modifiers::SUPER | Modifiers::SHIFT
+                } else {
+                    Modifiers::CONTROL | Modifiers::SHIFT
+                };
+                let hotkey = HotKey::new(Some(modifiers), Code::KeyO);
+                match mgr.register(hotkey) {
+                    Ok(()) => info!("global hotkey registered: Cmd/Ctrl+Shift+O"),
+                    Err(e) => tracing::warn!("hotkey registration failed (another app may use it): {e}"),
+                }
+                Some(mgr)
+            }
+            Err(e) => {
+                tracing::warn!("hotkey manager init failed: {e}");
+                None
+            }
+        }
+    };
+
     let mut last_tailscale_check = std::time::Instant::now();
 
     loop {
@@ -261,6 +290,13 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
         }
 
         tray.poll_menu_events();
+
+        // Poll global hotkey events
+        if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
+            if event.state == global_hotkey::HotKeyState::Pressed {
+                let _ = tray_cmd_tx_hotkey.send(TrayCommand::OpenChat);
+            }
+        }
 
         while let Ok(event) = gateway_event_rx.try_recv() {
             tray.handle_gateway_event(&event)?;

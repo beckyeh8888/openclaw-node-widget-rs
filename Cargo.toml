@@ -27,6 +27,7 @@ uuid = { version = "1", features = ["v4"] }
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+global-hotkey = "0.6"
 tray-icon = "0.14"
 url = "2"
 open = "5"
