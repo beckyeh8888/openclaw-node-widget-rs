@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::Path,
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -13,7 +14,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::config;
@@ -37,6 +38,7 @@ pub struct GatewayClient {
     pub public_key_pem: String,
     pub private_key: SigningKey,
     pub tx: mpsc::UnboundedSender<GatewayEvent>,
+    pub chat_state: Arc<Mutex<crate::chat::ChatState>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -153,6 +155,8 @@ pub async fn spawn_connection(
     url: Option<String>,
     token: Option<String>,
     tx: mpsc::UnboundedSender<GatewayEvent>,
+    chat_state: Arc<Mutex<crate::chat::ChatState>>,
+    cmd_rx: Option<mpsc::UnboundedReceiver<GatewayCommand>>,
 ) -> bool {
     let Some(url) = url.filter(|v| !v.trim().is_empty()) else {
         return false;
@@ -188,42 +192,61 @@ pub async fn spawn_connection(
         public_key_pem,
         private_key,
         tx,
+        chat_state,
     };
 
     tokio::spawn(async move {
-        connect_loop(client).await;
+        connect_loop(client, cmd_rx).await;
     });
 
     true
 }
 
-/// Spawn gateway tasks for all configured connections. Returns the number spawned.
+/// Spawn gateway tasks for all configured connections.
+/// Returns (count_spawned, optional_command_sender_for_first_connection).
 pub async fn spawn_all_connections(
     connections: &[config::ConnectionConfig],
     tx: mpsc::UnboundedSender<GatewayEvent>,
-) -> usize {
+    chat_state: Arc<Mutex<crate::chat::ChatState>>,
+) -> (usize, Option<mpsc::UnboundedSender<GatewayCommand>>) {
     let mut count = 0;
-    for conn in connections {
+    let mut first_cmd_tx = None;
+    for (i, conn) in connections.iter().enumerate() {
+        // Only the first connection gets a command channel for chat
+        let cmd_rx = if i == 0 {
+            let (tx, rx) = mpsc::unbounded_channel();
+            first_cmd_tx = Some(tx);
+            Some(rx)
+        } else {
+            None
+        };
         let spawned = spawn_connection(
             conn.name.clone(),
             Some(conn.gateway_url.clone()),
             conn.gateway_token.clone(),
             tx.clone(),
+            Arc::clone(&chat_state),
+            cmd_rx,
         )
         .await;
         if spawned {
             count += 1;
         }
     }
-    count
+    (count, first_cmd_tx)
 }
 
-pub async fn connect_loop(client: GatewayClient) {
+pub async fn connect_loop(client: GatewayClient, mut cmd_rx: Option<mpsc::UnboundedReceiver<GatewayCommand>>) {
     let mut delay_secs = 1u64;
     let name = client.connection_name.clone();
 
     loop {
-        let result = connect_once(&client).await;
+        let result = connect_once(&client, &mut cmd_rx).await;
+
+        // Notify chat state of disconnection
+        if let Ok(mut cs) = client.chat_state.lock() {
+            cs.inbox.push(crate::chat::ChatInbound::Disconnected);
+        }
 
         match result {
             Ok(()) => {
@@ -255,7 +278,7 @@ pub async fn connect_loop(client: GatewayClient) {
     }
 }
 
-async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
+async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::UnboundedReceiver<GatewayCommand>>) -> Result<(), ConnectError> {
     let masked_url = if let Some(ref t) = client.token {
         client.url.replace(t, &mask_token(t))
     } else {
@@ -499,6 +522,11 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
         gateway_version,
     });
 
+    // Notify chat state of connection
+    if let Ok(mut cs) = client.chat_state.lock() {
+        cs.inbox.push(crate::chat::ChatInbound::Connected);
+    }
+
     // Attempt to subscribe to gateway events (best-effort, may not be supported)
     let subscribe_id = Uuid::new_v4().to_string();
     let subscribe_frame = json!({
@@ -521,6 +549,7 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
     let mut pending_presence: Option<String> = None;
     let mut ping_ticker = tokio::time::interval(Duration::from_secs(30));
     let mut ping_sent_at: Option<std::time::Instant> = None;
+    let mut pending_chat_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     loop {
         tokio::select! {
@@ -545,6 +574,48 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                     .map_err(|e| ConnectError::Retryable(format!("presence request send failed: {e}")))?;
                 pending_presence = Some(req_id);
             }
+            // Receive commands from the chat UI (only for the first connection)
+            Some(cmd) = async {
+                match cmd_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match cmd {
+                    GatewayCommand::SendChat { message, session_key } => {
+                        let req_id = Uuid::new_v4().to_string();
+                        let mut params = json!({ "message": message });
+                        if let Some(sk) = session_key {
+                            params["sessionKey"] = json!(sk);
+                        }
+                        let frame = json!({
+                            "type": "req",
+                            "id": req_id,
+                            "method": "chat.send",
+                            "params": params
+                        });
+                        info!(req_id = %req_id, "sending chat.send");
+                        pending_chat_ids.insert(req_id);
+                        if let Err(e) = write.send(Message::Text(frame.to_string().into())).await {
+                            warn!("chat.send failed: {e}");
+                        }
+                    }
+                    GatewayCommand::ListSessions => {
+                        let req_id = Uuid::new_v4().to_string();
+                        let frame = json!({
+                            "type": "req",
+                            "id": req_id,
+                            "method": "sessions.list",
+                            "params": {}
+                        });
+                        info!(req_id = %req_id, "sending sessions.list");
+                        pending_chat_ids.insert(req_id);
+                        if let Err(e) = write.send(Message::Text(frame.to_string().into())).await {
+                            warn!("sessions.list failed: {e}");
+                        }
+                    }
+                }
+            }
             message = read.next() => {
                 let Some(message) = message else {
                     return Err(ConnectError::Retryable("gateway closed".to_string()));
@@ -553,7 +624,7 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
                 match message.map_err(|e| ConnectError::Retryable(format!("gateway read failed: {e}")))? {
                     Message::Text(text) => {
                         let frame = parse_frame(&text)?;
-                        handle_frame(&client.connection_name, &client.tx, &frame, pending_presence.as_deref());
+                        handle_frame(&client.connection_name, &client.tx, &client.chat_state, &frame, pending_presence.as_deref(), &mut pending_chat_ids);
 
                         if frame_type(&frame) == Some("res") {
                             let id = frame.get("id").and_then(Value::as_str);
@@ -594,14 +665,18 @@ async fn connect_once(client: &GatewayClient) -> Result<(), ConnectError> {
 fn handle_frame(
     connection_name: &str,
     tx: &mpsc::UnboundedSender<GatewayEvent>,
+    chat_state: &Arc<Mutex<crate::chat::ChatState>>,
     frame: &Value,
     pending_presence: Option<&str>,
+    pending_chat_ids: &mut std::collections::HashSet<String>,
 ) {
     match frame_type(frame) {
         Some("event") => {
             if let Some(event_name) = frame_name(frame) {
                 debug!(event = event_name, "gateway event received");
-                if let Some(event) = node_status_from_event(connection_name, event_name, frame.get("payload")) {
+                if event_name == "chat" {
+                    handle_chat_event(chat_state, frame.get("payload"));
+                } else if let Some(event) = node_status_from_event(connection_name, event_name, frame.get("payload")) {
                     let _ = tx.send(event);
                 }
             }
@@ -609,11 +684,24 @@ fn handle_frame(
         Some("res") => {
             let ok = frame.get("ok").and_then(Value::as_bool).unwrap_or(false);
             let id = frame.get("id").and_then(Value::as_str);
+
+            // Check if this is a chat/sessions response
+            if let Some(id_str) = id {
+                if pending_chat_ids.remove(id_str) {
+                    if ok {
+                        handle_chat_response(chat_state, frame.get("payload"));
+                    } else {
+                        let error = frame.get("error").and_then(Value::as_str).unwrap_or("unknown error");
+                        warn!(error, "chat/sessions request failed");
+                    }
+                    return;
+                }
+            }
+
             info!(ok, ?id, ?pending_presence, "response frame received");
             if id.is_some() && id == pending_presence {
                 if ok {
                     if let Some(payload) = frame.get("payload") {
-                        // Log just node count, not full PATH dump
                         let node_count = payload.get("nodes").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0);
                         info!(node_count, "node.list response OK");
                     }
@@ -627,6 +715,87 @@ fn handle_frame(
             }
         }
         _ => {}
+    }
+}
+
+fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: Option<&Value>) {
+    let Some(payload) = payload else {
+        warn!("chat event with no payload");
+        return;
+    };
+
+    let text = payload
+        .get("text")
+        .or_else(|| payload.get("message"))
+        .or_else(|| payload.get("content"))
+        .and_then(Value::as_str);
+
+    let Some(text) = text else {
+        warn!(?payload, "chat event with unknown format — skipping");
+        return;
+    };
+
+    let agent_name = payload
+        .get("agentName")
+        .or_else(|| payload.get("agent"))
+        .or_else(|| payload.get("sender"))
+        .and_then(Value::as_str)
+        .map(String::from);
+
+    if let Ok(mut cs) = chat_state.lock() {
+        cs.inbox.push(crate::chat::ChatInbound::Reply {
+            text: text.to_string(),
+            agent_name,
+        });
+    }
+}
+
+fn handle_chat_response(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: Option<&Value>) {
+    let Some(payload) = payload else { return };
+
+    // sessions.list response: payload has "sessions" array
+    if let Some(sessions) = payload.get("sessions").and_then(Value::as_array) {
+        let session_list: Vec<ChatSessionInfo> = sessions
+            .iter()
+            .filter_map(|s| {
+                let key = s.get("key").or_else(|| s.get("id")).and_then(Value::as_str)?;
+                let name = s
+                    .get("name")
+                    .or_else(|| s.get("displayName"))
+                    .and_then(Value::as_str)
+                    .unwrap_or(key);
+                Some(ChatSessionInfo {
+                    key: key.to_string(),
+                    name: name.to_string(),
+                })
+            })
+            .collect();
+        if let Ok(mut cs) = chat_state.lock() {
+            cs.inbox.push(crate::chat::ChatInbound::SessionsList {
+                sessions: session_list,
+            });
+        }
+        return;
+    }
+
+    // chat.send response: may contain the agent reply directly
+    let text = payload
+        .get("text")
+        .or_else(|| payload.get("message"))
+        .or_else(|| payload.get("reply"))
+        .and_then(Value::as_str);
+    if let Some(text) = text {
+        let agent_name = payload
+            .get("agentName")
+            .or_else(|| payload.get("agent"))
+            .and_then(Value::as_str)
+            .map(String::from);
+        if let Ok(mut cs) = chat_state.lock() {
+            cs.inbox.push(crate::chat::ChatInbound::Reply {
+                text: text.to_string(),
+                agent_name,
+            });
+        }
     }
 }
 

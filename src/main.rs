@@ -24,6 +24,8 @@ use tokio::sync::mpsc;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
+use std::sync::{Arc, Mutex};
+
 use crate::{
     config::{config_path, Config},
     lock::{try_acquire_lock, AcquireResult},
@@ -203,12 +205,15 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     let (gateway_event_tx, mut gateway_event_rx) = mpsc::unbounded_channel();
     let (gateway_monitor_tx, gateway_monitor_rx) = mpsc::unbounded_channel();
 
+    let chat_state = Arc::new(Mutex::new(chat::ChatState::new()));
+
     let effective_connections = config.effective_connections();
     let connection_names: Vec<String> = effective_connections.iter().map(|c| c.name.clone()).collect();
 
-    let gateway_count = gateway::spawn_all_connections(
+    let (gateway_count, gateway_cmd_tx) = gateway::spawn_all_connections(
         &effective_connections,
         gateway_event_tx,
+        Arc::clone(&chat_state),
     )
     .await;
     let gateway_enabled = gateway_count > 0;
@@ -364,7 +369,14 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                     });
                 }
                 TrayCommand::OpenChat => {
-                    info!("chat window requested (not yet wired to gateway)");
+                    if let Some(ref cmd_tx) = gateway_cmd_tx {
+                        chat::run_chat_window(
+                            Arc::clone(&chat_state),
+                            cmd_tx.clone(),
+                        )?;
+                    } else {
+                        tray::send_notification_public("No gateway connection for chat");
+                    }
                 }
                 TrayCommand::CopyDiagnostics => {
                     let conns = config.effective_connections();
@@ -414,10 +426,12 @@ async fn run_daemon(config: Config) -> error::Result<()> {
     let (gateway_event_tx, mut gateway_event_rx) = mpsc::unbounded_channel();
     let (gateway_monitor_tx, gateway_monitor_rx) = mpsc::unbounded_channel();
 
+    let daemon_chat_state = Arc::new(Mutex::new(chat::ChatState::new()));
     let effective_connections = config.effective_connections();
-    let gateway_count = gateway::spawn_all_connections(
+    let (gateway_count, _gateway_cmd_tx) = gateway::spawn_all_connections(
         &effective_connections,
         gateway_event_tx,
+        daemon_chat_state,
     )
     .await;
     let gateway_enabled = gateway_count > 0;
