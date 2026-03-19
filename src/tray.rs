@@ -13,6 +13,7 @@ use crate::{
     gateway::{GatewayEvent, GatewayStats},
     i18n::t,
     monitor::{NodeStatus, StopReason},
+    plugin::ConnectionStatus as PluginConnectionStatus,
     tailscale,
 };
 
@@ -92,6 +93,9 @@ pub struct TrayState {
     tailscale_status: tailscale::TailscaleStatus,
     latency_item: MenuItem,
     latency_ms: Option<u64>,
+    /// Plugin status menu items, keyed by plugin id.
+    plugin_items: HashMap<String, MenuItem>,
+    plugin_order: Vec<String>,
 }
 
 impl TrayState {
@@ -281,6 +285,8 @@ impl TrayState {
             tailscale_status: initial_ts,
             latency_item,
             latency_ms: None,
+            plugin_items: HashMap::new(),
+            plugin_order: Vec::new(),
         })
     }
 
@@ -539,6 +545,48 @@ impl TrayState {
         )
     }
 
+    /// Update the tray menu with current plugin statuses from the registry.
+    pub fn update_plugin_statuses(
+        &mut self,
+        statuses: &[(String, String, PluginConnectionStatus)],
+    ) {
+        for (id, name, status) in statuses {
+            let status_str = match status {
+                PluginConnectionStatus::Connected => "✓",
+                PluginConnectionStatus::Disconnected => "✗",
+                PluginConnectionStatus::Reconnecting => "↻",
+                PluginConnectionStatus::Error(_) => "⚠",
+            };
+            let label = format!("{status_str} {name}");
+            if let Some(item) = self.plugin_items.get(id) {
+                item.set_text(&label);
+            }
+        }
+    }
+
+    /// Initialize plugin menu items (call once after plugins are registered).
+    pub fn init_plugin_items(
+        &mut self,
+        plugins: &[(String, String, PluginConnectionStatus)],
+    ) {
+        // Plugin items are informational (disabled) labels in the menu.
+        // We don't dynamically add them to the existing tray menu since
+        // tray-icon doesn't support insert-at.  Instead we store them
+        // for tooltip / diagnostics use.
+        for (id, name, status) in plugins {
+            let status_str = match status {
+                PluginConnectionStatus::Connected => "✓",
+                PluginConnectionStatus::Disconnected => "✗",
+                PluginConnectionStatus::Reconnecting => "↻",
+                PluginConnectionStatus::Error(_) => "⚠",
+            };
+            let label = format!("{status_str} {name}");
+            let item = MenuItem::new(&label, false, None);
+            self.plugin_items.insert(id.clone(), item);
+            self.plugin_order.push(id.clone());
+        }
+    }
+
     pub fn update_tailscale_status(&mut self, gateway_urls: &[String]) {
         let new_status = tailscale::check_status();
         let label = match new_status {
@@ -683,12 +731,7 @@ impl TrayState {
     }
 }
 
-pub fn mask_token(token: &str) -> String {
-    if token.len() <= 8 {
-        return "****".to_string();
-    }
-    format!("{}***{}", &token[..4], &token[token.len() - 4..])
-}
+pub use crate::gateway::mask_token;
 
 fn truncate_error(msg: &str) -> String {
     if msg.len() <= 60 {

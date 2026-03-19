@@ -6,6 +6,7 @@ use tracing::warn;
 
 use crate::gateway::{ChatAttachment, ChatSessionInfo, GatewayCommand};
 use crate::i18n;
+use crate::plugin::PluginCommand;
 
 const MAX_MESSAGES: usize = 50;
 
@@ -65,6 +66,38 @@ pub fn run_chat_window(
     chat_state: Arc<Mutex<ChatState>>,
     cmd_tx: mpsc::UnboundedSender<GatewayCommand>,
 ) -> crate::error::Result<()> {
+    // Wrap the GatewayCommand sender in a PluginCommand sender for
+    // backward compatibility with code that still uses GatewayCommand.
+    let (plugin_tx, mut plugin_rx) = mpsc::unbounded_channel::<PluginCommand>();
+    let gw_tx = cmd_tx.clone();
+    tokio::spawn(async move {
+        while let Some(cmd) = plugin_rx.recv().await {
+            match cmd {
+                PluginCommand::SendChat {
+                    message,
+                    session_key,
+                    attachments,
+                } => {
+                    let _ = gw_tx.send(GatewayCommand::SendChat {
+                        message,
+                        session_key,
+                        attachments,
+                    });
+                }
+                PluginCommand::ListSessions => {
+                    let _ = gw_tx.send(GatewayCommand::ListSessions);
+                }
+            }
+        }
+    });
+    run_chat_window_plugin(chat_state, plugin_tx)
+}
+
+/// Open the chat window routing commands through the plugin system.
+pub fn run_chat_window_plugin(
+    chat_state: Arc<Mutex<ChatState>>,
+    cmd_tx: mpsc::UnboundedSender<PluginCommand>,
+) -> crate::error::Result<()> {
     if let Ok(state) = chat_state.lock() {
         if state.window_open {
             return Ok(());
@@ -76,7 +109,7 @@ pub fn run_chat_window(
         state.window_focused = true;
     }
 
-    let _ = cmd_tx.send(GatewayCommand::ListSessions);
+    let _ = cmd_tx.send(PluginCommand::ListSessions);
 
     // Build init data and embed into HTML
     let init_json = build_init_json(&chat_state);
@@ -97,7 +130,7 @@ pub fn run_chat_window(
 fn run_webview_window(
     html: String,
     chat_state: Arc<Mutex<ChatState>>,
-    cmd_tx: mpsc::UnboundedSender<GatewayCommand>,
+    cmd_tx: mpsc::UnboundedSender<PluginCommand>,
 ) -> crate::error::Result<()> {
     use tao::dpi::LogicalSize;
     use tao::event::{Event, StartCause, WindowEvent};
@@ -191,7 +224,7 @@ fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
 
 fn handle_ipc_message(
     body: &str,
-    cmd_tx: &mpsc::UnboundedSender<GatewayCommand>,
+    cmd_tx: &mpsc::UnboundedSender<PluginCommand>,
     chat_state: &Arc<Mutex<ChatState>>,
 ) {
     let Ok(msg) = serde_json::from_str::<serde_json::Value>(body) else {
@@ -238,7 +271,7 @@ fn handle_ipc_message(
                         .collect()
                 });
 
-            let _ = cmd_tx.send(GatewayCommand::SendChat {
+            let _ = cmd_tx.send(PluginCommand::SendChat {
                 message: message.clone(),
                 session_key,
                 attachments,
@@ -265,7 +298,7 @@ fn handle_ipc_message(
             }
         }
         "listSessions" => {
-            let _ = cmd_tx.send(GatewayCommand::ListSessions);
+            let _ = cmd_tx.send(PluginCommand::ListSessions);
         }
         _ => {
             warn!("unknown IPC message type: {msg_type}");
@@ -333,7 +366,8 @@ fn process_inbox_to_webview(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway::{ChatSessionInfo, GatewayCommand};
+    use crate::gateway::ChatSessionInfo;
+    use crate::plugin::PluginCommand;
     use std::sync::{Arc, Mutex};
 
     // ── ChatState initialization ─────────────────────────────────────
@@ -542,8 +576,8 @@ mod tests {
 
     fn setup_ipc() -> (
         Arc<Mutex<ChatState>>,
-        tokio::sync::mpsc::UnboundedSender<GatewayCommand>,
-        tokio::sync::mpsc::UnboundedReceiver<GatewayCommand>,
+        tokio::sync::mpsc::UnboundedSender<PluginCommand>,
+        tokio::sync::mpsc::UnboundedReceiver<PluginCommand>,
     ) {
         let state = Arc::new(Mutex::new(ChatState::new()));
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -559,7 +593,7 @@ mod tests {
 
         let cmd = rx.try_recv().expect("should receive SendChat command");
         match cmd {
-            GatewayCommand::SendChat {
+            PluginCommand::SendChat {
                 message,
                 session_key,
                 attachments,
@@ -588,7 +622,7 @@ mod tests {
 
         let cmd = rx.try_recv().unwrap();
         match cmd {
-            GatewayCommand::SendChat { session_key, .. } => {
+            PluginCommand::SendChat { session_key, .. } => {
                 assert_eq!(session_key, Some("my-session".to_string()));
             }
             _ => panic!("expected SendChat"),
@@ -604,7 +638,7 @@ mod tests {
 
         let cmd = rx.try_recv().unwrap();
         match cmd {
-            GatewayCommand::SendChat { session_key, .. } => {
+            PluginCommand::SendChat { session_key, .. } => {
                 assert_eq!(session_key, None);
             }
             _ => panic!("expected SendChat"),
@@ -637,7 +671,7 @@ mod tests {
 
         let cmd = rx.try_recv().unwrap();
         match cmd {
-            GatewayCommand::SendChat { attachments, .. } => {
+            PluginCommand::SendChat { attachments, .. } => {
                 let atts = attachments.expect("should have attachments");
                 assert_eq!(atts.len(), 1);
                 assert_eq!(atts[0].data, "abc123");
@@ -669,7 +703,7 @@ mod tests {
         handle_ipc_message(body, &tx, &state);
 
         let cmd = rx.try_recv().unwrap();
-        assert!(matches!(cmd, GatewayCommand::ListSessions));
+        assert!(matches!(cmd, PluginCommand::ListSessions));
     }
 
     #[test]

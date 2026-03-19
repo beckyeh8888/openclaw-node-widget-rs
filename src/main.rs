@@ -10,6 +10,7 @@ mod i18n;
 mod install;
 mod lock;
 mod monitor;
+pub mod plugin;
 mod process;
 mod settings;
 mod setup;
@@ -30,6 +31,7 @@ use crate::{
     config::{config_path, Config},
     lock::{try_acquire_lock, AcquireResult},
     monitor::{spawn_monitor, MonitorCommand},
+    plugin::registry::PluginRegistry,
     tray::{TrayCommand, TrayState},
 };
 
@@ -208,21 +210,82 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
 
     let chat_state = Arc::new(Mutex::new(chat::ChatState::new()));
 
+    // ── Build PluginRegistry from config ────────────────────────────
+    let mut plugin_registry = PluginRegistry::new();
+    let effective_plugins = config.effective_plugins();
+
+    for plugin_cfg in &effective_plugins {
+        match plugin_cfg.plugin_type.as_str() {
+            "openclaw" => {
+                let mut p = plugin::openclaw::OpenClawPlugin::new(plugin_cfg, Arc::clone(&chat_state));
+                p.set_gateway_event_tx(gateway_event_tx.clone());
+                plugin_registry.register(Box::new(p));
+            }
+            "ollama" => {
+                plugin_registry.register(Box::new(plugin::ollama::OllamaPlugin::new(plugin_cfg)));
+            }
+            "openai-compatible" => {
+                plugin_registry.register(Box::new(plugin::openai_compat::OpenAICompatPlugin::new(plugin_cfg)));
+            }
+            other => {
+                tracing::warn!(plugin_type = other, "unknown plugin type — skipping");
+            }
+        }
+    }
+
+    // Connect all plugins (OpenClaw plugins spawn gateway tasks)
+    plugin_registry.connect_all();
+
+    let plugin_names = plugin_registry.names();
+    let plugin_count = plugin_registry.len();
+
+    // ── Backward compat: also spawn gateway connections the old way
+    // for connections that are NOT covered by plugins.
     let effective_connections = config.effective_connections();
     let connection_names: Vec<String> = effective_connections.iter().map(|c| c.name.clone()).collect();
 
-    let (gateway_count, gateway_cmd_tx) = gateway::spawn_all_connections(
-        &effective_connections,
-        gateway_event_tx,
-        Arc::clone(&chat_state),
-    )
-    .await;
+    // If we have plugins, the OpenClaw plugins already handle gateway connections.
+    // Only spawn the old way if there are NO plugins configured.
+    let (gateway_count, gateway_cmd_tx) = if effective_plugins.is_empty() {
+        gateway::spawn_all_connections(
+            &effective_connections,
+            gateway_event_tx,
+            Arc::clone(&chat_state),
+        )
+        .await
+    } else {
+        // OpenClaw plugins handle their own gateway connections.
+        // Count OpenClaw plugins as gateway connections.
+        let oc_count = effective_plugins
+            .iter()
+            .filter(|p| p.plugin_type == "openclaw")
+            .count();
+        (oc_count, plugin_registry.active_command_sender().map(|tx| {
+            // Create a GatewayCommand sender that wraps the PluginCommand sender
+            let (gw_tx, mut gw_rx) = mpsc::unbounded_channel::<gateway::GatewayCommand>();
+            let plugin_tx = tx;
+            tokio::spawn(async move {
+                while let Some(cmd) = gw_rx.recv().await {
+                    let plugin_cmd = match cmd {
+                        gateway::GatewayCommand::SendChat { message, session_key, attachments } => {
+                            plugin::PluginCommand::SendChat { message, session_key, attachments }
+                        }
+                        gateway::GatewayCommand::ListSessions => plugin::PluginCommand::ListSessions,
+                    };
+                    let _ = plugin_tx.send(plugin_cmd);
+                }
+            });
+            gw_tx
+        }))
+    };
     let gateway_enabled = gateway_count > 0;
 
     info!(
-        count = gateway_count,
+        gateway_count,
+        plugin_count,
+        plugins = ?plugin_names,
         connections = ?connection_names,
-        "gateway connections spawned"
+        "plugins and gateway connections initialized"
     );
 
     spawn_monitor(
@@ -245,6 +308,10 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
         &connection_names,
     )?;
     tray.set_gateway_configured(gateway_enabled)?;
+
+    // Initialize tray plugin items
+    let plugin_statuses = plugin_registry.plugin_statuses();
+    tray.init_plugin_items(&plugin_statuses);
 
     // Register global hotkey: Cmd+Shift+O (macOS) / Ctrl+Shift+O (Win/Linux)
     let _hotkey_manager = {
@@ -438,7 +505,13 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                     });
                 }
                 TrayCommand::OpenChat => {
-                    if let Some(ref cmd_tx) = gateway_cmd_tx {
+                    // Prefer plugin command sender; fall back to gateway cmd
+                    if let Some(plugin_tx) = plugin_registry.active_command_sender() {
+                        chat::run_chat_window_plugin(
+                            Arc::clone(&chat_state),
+                            plugin_tx,
+                        )?;
+                    } else if let Some(ref cmd_tx) = gateway_cmd_tx {
                         chat::run_chat_window(
                             Arc::clone(&chat_state),
                             cmd_tx.clone(),

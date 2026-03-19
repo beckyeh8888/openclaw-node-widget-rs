@@ -16,6 +16,8 @@ pub struct Config {
     pub log: LogConfig,
     #[serde(default)]
     pub connections: Vec<ConnectionConfig>,
+    #[serde(default)]
+    pub plugins: Vec<PluginConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +33,26 @@ pub struct ConnectionConfig {
     pub gateway_url: String,
     #[serde(default)]
     pub gateway_token: Option<String>,
+}
+
+/// New plugin-based config format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginConfig {
+    #[serde(rename = "type")]
+    pub plugin_type: String,
+    pub name: String,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+    #[serde(default)]
+    pub poll_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +114,7 @@ impl Default for Config {
             appearance: AppearanceConfig::default(),
             log: LogConfig::default(),
             connections: Vec::new(),
+            plugins: Vec::new(),
         }
     }
 }
@@ -185,6 +208,31 @@ impl Config {
         }
     }
 
+    /// Returns the effective list of plugins.
+    ///
+    /// Priority: `[[plugins]]` → `[[connections]]` (auto-mapped to openclaw) → `[gateway]`.
+    pub fn effective_plugins(&self) -> Vec<PluginConfig> {
+        if !self.plugins.is_empty() {
+            return self.plugins.clone();
+        }
+
+        // Migrate [[connections]] to plugin format
+        let conns = self.effective_connections();
+        conns
+            .iter()
+            .map(|c| PluginConfig {
+                plugin_type: "openclaw".to_string(),
+                name: c.name.clone(),
+                url: Some(c.gateway_url.clone()),
+                token: c.gateway_token.clone(),
+                model: None,
+                api_key: None,
+                webhook_url: None,
+                poll_url: None,
+            })
+            .collect()
+    }
+
     pub fn validate(&self) -> Vec<String> {
         let mut errors = Vec::new();
 
@@ -264,6 +312,25 @@ impl Config {
                     tracing::warn!("failed to save migrated config: {e}");
                 }
             }
+        }
+
+        // Auto-migrate: if [[connections]] exist but no [[plugins]], migrate
+        if config.plugins.is_empty() && !config.connections.is_empty() {
+            info!("migrating [[connections]] config to [[plugins]] format");
+            config.plugins = config
+                .connections
+                .iter()
+                .map(|c| PluginConfig {
+                    plugin_type: "openclaw".to_string(),
+                    name: c.name.clone(),
+                    url: Some(c.gateway_url.clone()),
+                    token: c.gateway_token.clone(),
+                    model: None,
+                    api_key: None,
+                    webhook_url: None,
+                    poll_url: None,
+                })
+                .collect();
         }
 
         Ok(config)
