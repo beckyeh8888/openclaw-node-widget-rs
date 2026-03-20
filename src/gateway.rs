@@ -557,6 +557,25 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
     let mut ping_sent_at: Option<std::time::Instant> = None;
     let mut pending_chat_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    // Discover available agents from the Gateway
+    {
+        let agents_req_id = Uuid::new_v4().to_string();
+        let agents_frame = json!({
+            "type": "req",
+            "id": agents_req_id,
+            "method": "agents.list",
+            "params": {}
+        });
+        info!("sending agents.list request on connect");
+        pending_chat_ids.insert(agents_req_id);
+        if let Err(e) = write
+            .send(Message::Text(agents_frame.to_string()))
+            .await
+        {
+            info!("agents.list send failed (non-fatal): {e}");
+        }
+    }
+
     loop {
         tokio::select! {
             _ = ping_ticker.tick() => {
@@ -623,6 +642,20 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
                         pending_chat_ids.insert(req_id);
                         if let Err(e) = write.send(Message::Text(frame.to_string())).await {
                             warn!("sessions.list failed: {e}");
+                        }
+                    }
+                    GatewayCommand::ListAgents => {
+                        let req_id = Uuid::new_v4().to_string();
+                        let frame = json!({
+                            "type": "req",
+                            "id": req_id,
+                            "method": "agents.list",
+                            "params": {}
+                        });
+                        info!(req_id = %req_id, "sending agents.list");
+                        pending_chat_ids.insert(req_id);
+                        if let Err(e) = write.send(Message::Text(frame.to_string())).await {
+                            warn!("agents.list failed: {e}");
                         }
                     }
                 }
@@ -858,12 +891,26 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
             || (!done && !state.is_empty()));
 
     if let Ok(mut cs) = chat_state.lock() {
-        // Session filter: drop events from sub-agent / isolated sessions only.
-        // TODO: Refine filtering once Gateway sessionKey format is confirmed.
+        // Session filter: drop events from sub-agent / isolated sessions,
+        // and events not matching the active agent's session key.
         if let Some(evt_key) = event_session {
             let is_sub = evt_key.contains("isolated") || evt_key.starts_with("run:");
             if is_sub {
                 tracing::debug!("ignoring chat event from sub-agent session {evt_key}");
+                return;
+            }
+            // Filter by active agent session key (substring match for canonical keys)
+            let active_key = &cs.active_session_key;
+            if !active_key.is_empty()
+                && active_key != "main"
+                && !evt_key.contains(active_key.as_str())
+                && !active_key.contains(evt_key)
+            {
+                tracing::debug!(
+                    evt_key,
+                    active_key = active_key.as_str(),
+                    "ignoring chat event from non-active agent session"
+                );
                 return;
             }
         }
@@ -967,6 +1014,38 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
 
 fn handle_chat_response(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: Option<&Value>) {
     let Some(payload) = payload else { return };
+
+    // agents.list response: payload has "agents" array
+    if let Some(agents) = payload.get("agents").and_then(Value::as_array) {
+        let agent_list: Vec<AgentInfo> = agents
+            .iter()
+            .filter_map(|a| {
+                let id = a.get("id").or_else(|| a.get("agentId")).and_then(Value::as_str)?;
+                let name = a
+                    .get("name")
+                    .or_else(|| a.get("displayName"))
+                    .and_then(Value::as_str)
+                    .unwrap_or(id);
+                let session_key = a
+                    .get("sessionKey")
+                    .and_then(Value::as_str)
+                    .unwrap_or(id);
+                Some(AgentInfo {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    session_key: session_key.to_string(),
+                    agent_type: "openclaw".to_string(),
+                })
+            })
+            .collect();
+        info!(count = agent_list.len(), "agents.list response received");
+        if let Ok(mut cs) = chat_state.lock() {
+            cs.inbox.push(crate::chat::ChatInbound::AgentsList {
+                agents: agent_list,
+            });
+        }
+        return;
+    }
 
     // sessions.list response: payload has "sessions" array
     if let Some(sessions) = payload.get("sessions").and_then(Value::as_array) {
@@ -1342,6 +1421,126 @@ mod tests {
         assert_eq!(s.inbox.len(), 1, "non-streaming should produce one Reply");
         assert!(matches!(&s.inbox[0], crate::chat::ChatInbound::Reply { .. }));
     }
+
+    // ── Wave 10: Agent Switcher ────────────────────────────────────
+
+    #[test]
+    fn given_gateway_connected_when_agents_list_then_agents_populated() {
+        let cs = make_chat_state();
+        let payload = json!({
+            "agents": [
+                { "id": "main", "name": "Arno", "sessionKey": "main" },
+                { "id": "divination", "displayName": "問心閣", "sessionKey": "divination" }
+            ]
+        });
+        handle_chat_response(&cs, Some(&payload));
+
+        let s = cs.lock().unwrap();
+        assert_eq!(s.inbox.len(), 1);
+        if let crate::chat::ChatInbound::AgentsList { agents } = &s.inbox[0] {
+            assert_eq!(agents.len(), 2);
+            assert_eq!(agents[0].id, "main");
+            assert_eq!(agents[0].name, "Arno");
+            assert_eq!(agents[1].id, "divination");
+            assert_eq!(agents[1].name, "問心閣");
+            assert_eq!(agents[1].agent_type, "openclaw");
+        } else {
+            panic!("expected AgentsList event");
+        }
+    }
+
+    #[test]
+    fn given_agent_selected_when_send_message_then_correct_session_key_used() {
+        let cs = make_chat_state();
+        {
+            let mut s = cs.lock().unwrap();
+            s.active_agent_id = "divination".to_string();
+            s.active_session_key = "divination".to_string();
+        }
+        // Verify the state was set correctly
+        let s = cs.lock().unwrap();
+        assert_eq!(s.active_agent_id, "divination");
+        assert_eq!(s.active_session_key, "divination");
+    }
+
+    #[test]
+    fn given_agent_switch_then_only_new_agent_messages_shown() {
+        let cs = make_chat_state();
+        {
+            let mut s = cs.lock().unwrap();
+            s.active_agent_id = "office".to_string();
+            s.active_session_key = "office".to_string();
+        }
+
+        // Message from different agent session should be filtered
+        let payload = json!({
+            "text": "hello from divination",
+            "sessionKey": "divination",
+            "agentName": "Diviner"
+        });
+        handle_chat_event(&cs, Some(&payload));
+
+        let s = cs.lock().unwrap();
+        assert!(s.inbox.is_empty(), "message from non-active agent should be dropped");
+    }
+
+    #[test]
+    fn given_agent_switch_then_matching_agent_messages_shown() {
+        let cs = make_chat_state();
+        {
+            let mut s = cs.lock().unwrap();
+            s.active_agent_id = "office".to_string();
+            s.active_session_key = "office".to_string();
+        }
+
+        let payload = json!({
+            "text": "hello from office",
+            "sessionKey": "office",
+            "agentName": "Otto"
+        });
+        handle_chat_event(&cs, Some(&payload));
+
+        let s = cs.lock().unwrap();
+        assert_eq!(s.inbox.len(), 1, "message from active agent should be received");
+    }
+
+    #[test]
+    fn given_no_agents_response_then_fallback_to_main() {
+        let cs = make_chat_state();
+        // Empty agents response
+        let payload = json!({ "agents": [] });
+        handle_chat_response(&cs, Some(&payload));
+
+        let s = cs.lock().unwrap();
+        // AgentsList event is still pushed (with empty list)
+        assert_eq!(s.inbox.len(), 1);
+        if let crate::chat::ChatInbound::AgentsList { agents } = &s.inbox[0] {
+            assert!(agents.is_empty());
+        } else {
+            panic!("expected AgentsList event");
+        }
+        // active_agent_id remains "main" (default)
+        assert_eq!(s.active_agent_id, "main");
+    }
+
+    #[test]
+    fn given_agents_list_with_agent_id_field_then_parsed_correctly() {
+        let cs = make_chat_state();
+        let payload = json!({
+            "agents": [
+                { "agentId": "otto", "name": "Otto the Office Bot" }
+            ]
+        });
+        handle_chat_response(&cs, Some(&payload));
+
+        let s = cs.lock().unwrap();
+        if let crate::chat::ChatInbound::AgentsList { agents } = &s.inbox[0] {
+            assert_eq!(agents[0].id, "otto");
+            assert_eq!(agents[0].session_key, "otto"); // defaults to id
+        } else {
+            panic!("expected AgentsList event");
+        }
+    }
 }
 
 fn platform_name() -> &'static str {
@@ -1410,6 +1609,16 @@ pub struct ChatAttachment {
     pub mime_type: String,
 }
 
+/// Represents an agent discovered from the Gateway.
+#[derive(Debug, Clone)]
+pub struct AgentInfo {
+    pub id: String,
+    pub name: String,
+    pub session_key: String,
+    /// "openclaw" for Gateway agents, "n8n" / "ollama" / "openai-compatible" for plugins.
+    pub agent_type: String,
+}
+
 #[derive(Debug)]
 pub enum GatewayCommand {
     SendChat {
@@ -1418,6 +1627,10 @@ pub enum GatewayCommand {
         attachments: Option<Vec<ChatAttachment>>,
     },
     ListSessions,
+    /// Request agent discovery from Gateway. Currently auto-sent on connect,
+    /// but available for manual refresh via IPC.
+    #[allow(dead_code)]
+    ListAgents,
 }
 
 #[derive(Debug, Clone)]

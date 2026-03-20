@@ -7,7 +7,7 @@ use tracing::warn;
 
 use crate::config::{Config, GeneralSettings, PluginConfig};
 use crate::dashboard::{DashboardData, LogBuffer, LogEntry, LogLevel};
-use crate::gateway::{ChatAttachment, ChatSessionInfo, GatewayCommand};
+use crate::gateway::{AgentInfo, ChatAttachment, ChatSessionInfo, GatewayCommand};
 use crate::history::{ChatHistory, PersistedMessage};
 use crate::i18n;
 use crate::plugin::{PluginCommand, TokenUsage};
@@ -59,6 +59,9 @@ pub enum ChatInbound {
         plugin_id: String,
         session_key: String,
     },
+    AgentsList {
+        agents: Vec<AgentInfo>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +90,10 @@ pub struct ChatState {
     pub active_plugin_id: Option<String>,
     /// Currently active session key within the active plugin.
     pub active_session_key: String,
+    /// Available agents discovered from Gateway.
+    pub agents: Vec<AgentInfo>,
+    /// Currently active agent ID (e.g. "main", "divination", "n8n").
+    pub active_agent_id: String,
     /// Set to true when the app should fully quit (e.g. from tray "Quit" menu).
     pub app_quit: bool,
 }
@@ -115,6 +122,8 @@ impl ChatState {
             settings_requested: false,
             active_plugin_id: None,
             active_session_key: "main".to_string(),
+            agents: Vec::new(),
+            active_agent_id: "main".to_string(),
             app_quit: false,
         }
     }
@@ -449,6 +458,19 @@ fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
         })
         .collect();
 
+    let agents_json: Vec<serde_json::Value> = state
+        .agents
+        .iter()
+        .map(|a| {
+            json!({
+                "id": a.id,
+                "name": a.name,
+                "sessionKey": a.session_key,
+                "type": a.agent_type,
+            })
+        })
+        .collect();
+
     json!({
         "lang": lang,
         "connected": state.connected,
@@ -461,6 +483,8 @@ fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
         "currentPage": state.current_page,
         "activePluginId": state.active_plugin_id,
         "activeSessionKey": state.active_session_key,
+        "activeAgentId": state.active_agent_id,
+        "agents": agents_json,
         "plugins": plugins_json,
         "theme": config.widget.theme,
         "alwaysOnTop": config.widget.always_on_top,
@@ -585,6 +609,54 @@ pub fn handle_ipc_message(
                         state.inbox.push(ChatInbound::PluginSwitched {
                             plugin_id,
                             session_key,
+                        });
+                    }
+                }
+            }
+        }
+        "switchAgent" => {
+            let agent_id = msg
+                .get("agentId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let agent_type = msg
+                .get("agentType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("openclaw")
+                .to_string();
+            let session_key = msg
+                .get("sessionKey")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&agent_id)
+                .to_string();
+            if !agent_id.is_empty() {
+                if let Ok(mut state) = chat_state.lock() {
+                    let changed = state.active_agent_id != agent_id;
+                    state.active_agent_id = agent_id.clone();
+                    if agent_type == "openclaw" {
+                        // For OpenClaw agents, set session key and route via gateway
+                        state.active_session_key = session_key;
+                        // Keep active_plugin_id pointing to an openclaw plugin (or default)
+                        let oc_id = cmd_senders
+                            .keys()
+                            .find(|k| k.starts_with("openclaw-"))
+                            .cloned()
+                            .unwrap_or_else(|| "default".to_string());
+                        state.active_plugin_id = Some(oc_id);
+                    } else {
+                        // For n8n/ollama/openai-compatible, route via plugin sender
+                        state.active_plugin_id = Some(agent_id.clone());
+                        state.active_session_key = "main".to_string();
+                    }
+                    if changed {
+                        let sk = state.active_session_key.clone();
+                        state.messages.clear();
+                        state.pending_stream = None;
+                        state.waiting_for_reply = false;
+                        state.inbox.push(ChatInbound::PluginSwitched {
+                            plugin_id: agent_id,
+                            session_key: sk,
                         });
                     }
                 }
@@ -942,6 +1014,46 @@ fn process_inbox_to_webview(
                 let _ = webview.evaluate_script(&format!(
                     "if(typeof onPluginSwitched==='function')onPluginSwitched({})",
                     data
+                ));
+            }
+            ChatInbound::AgentsList { agents } => {
+                state.agents = agents.clone();
+                // Merge n8n/ollama/openai-compatible plugins as agent entries
+                let config = Config::load().unwrap_or_default();
+                let mut all_agents: Vec<serde_json::Value> = agents
+                    .iter()
+                    .map(|a| {
+                        json!({
+                            "id": a.id,
+                            "name": a.name,
+                            "sessionKey": a.session_key,
+                            "type": a.agent_type,
+                        })
+                    })
+                    .collect();
+                // Add non-openclaw plugins as pseudo-agents
+                for p in config.effective_plugins() {
+                    if p.plugin_type != "openclaw" {
+                        let slug: String = p
+                            .name
+                            .to_lowercase()
+                            .chars()
+                            .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                            .collect::<String>()
+                            .trim_matches('-')
+                            .to_string();
+                        let id = format!("{}-{}", p.plugin_type, slug);
+                        all_agents.push(json!({
+                            "id": id,
+                            "name": p.name,
+                            "sessionKey": "",
+                            "type": p.plugin_type,
+                        }));
+                    }
+                }
+                let _ = webview.evaluate_script(&format!(
+                    "if(typeof initAgents==='function')initAgents({})",
+                    json!(all_agents)
                 ));
             }
         }
@@ -1864,5 +1976,87 @@ mod tests {
         let val: serde_json::Value = serde_json::from_str(&json_str).unwrap();
         // Even with default config (possibly 0 or 1 plugin), the key exists
         assert!(val["plugins"].is_array());
+    }
+
+    // ── Wave 10: Agent Switcher ────────────────────────────────────
+
+    #[test]
+    fn given_switch_agent_openclaw_then_session_key_set() {
+        let cs = Arc::new(Mutex::new(ChatState::new()));
+        let senders = HashMap::new();
+        let msg = serde_json::json!({
+            "type": "switchAgent",
+            "agentId": "divination",
+            "agentType": "openclaw",
+            "sessionKey": "divination"
+        });
+        handle_ipc_message(&msg.to_string(), &senders, &cs);
+
+        let s = cs.lock().unwrap();
+        assert_eq!(s.active_agent_id, "divination");
+        assert_eq!(s.active_session_key, "divination");
+    }
+
+    #[test]
+    fn given_switch_agent_n8n_then_plugin_id_set() {
+        let cs = Arc::new(Mutex::new(ChatState::new()));
+        let senders = HashMap::new();
+        let msg = serde_json::json!({
+            "type": "switchAgent",
+            "agentId": "n8n-minimax",
+            "agentType": "n8n",
+            "sessionKey": ""
+        });
+        handle_ipc_message(&msg.to_string(), &senders, &cs);
+
+        let s = cs.lock().unwrap();
+        assert_eq!(s.active_agent_id, "n8n-minimax");
+        assert_eq!(s.active_plugin_id.as_deref(), Some("n8n-minimax"));
+        assert_eq!(s.active_session_key, "main");
+    }
+
+    #[test]
+    fn given_agent_switch_then_chat_cleared() {
+        let cs = Arc::new(Mutex::new(ChatState::new()));
+        {
+            let mut s = cs.lock().unwrap();
+            s.messages.push(ChatMessage {
+                sender: ChatSender::User,
+                text: "old message".to_string(),
+            });
+            s.active_agent_id = "main".to_string();
+        }
+        let senders = HashMap::new();
+        let msg = serde_json::json!({
+            "type": "switchAgent",
+            "agentId": "office",
+            "agentType": "openclaw",
+            "sessionKey": "office"
+        });
+        handle_ipc_message(&msg.to_string(), &senders, &cs);
+
+        let s = cs.lock().unwrap();
+        assert!(s.messages.is_empty(), "messages should be cleared on agent switch");
+    }
+
+    #[test]
+    fn given_init_json_then_agents_key_present() {
+        let cs = Arc::new(Mutex::new(ChatState::new()));
+        {
+            let mut s = cs.lock().unwrap();
+            s.agents.push(crate::gateway::AgentInfo {
+                id: "main".to_string(),
+                name: "Arno".to_string(),
+                session_key: "main".to_string(),
+                agent_type: "openclaw".to_string(),
+            });
+        }
+        let json_str = build_init_json(&cs);
+        let val: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert!(val.get("agents").is_some(), "init data should contain agents key");
+        assert!(val["agents"].is_array());
+        assert_eq!(val["agents"].as_array().unwrap().len(), 1);
+        assert_eq!(val["agents"][0]["id"], "main");
+        assert_eq!(val["activeAgentId"], "main");
     }
 }

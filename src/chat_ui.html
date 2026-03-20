@@ -1101,7 +1101,7 @@ mark.search-highlight.current {
   <div id="page-chat" class="page active">
     <div id="header">
       <span class="header-title">🤖 <span id="headerChat">Chat</span></span>
-      <select id="pluginSelect" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border-light);border-radius:8px;padding:3px 8px;font-size:13px;outline:none;cursor:pointer;max-width:180px;"></select>
+      <select id="agentSelect" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border-light);border-radius:8px;padding:3px 8px;font-size:13px;outline:none;cursor:pointer;max-width:180px;"></select>
       <div id="sessionTabs" class="session-tabs"></div>
       <select id="sessionSelect" style="display:none;"><option value="">main</option></select>
       <button id="searchBtn" title="Search messages" onclick="toggleSearch()">🔍</button>
@@ -1307,21 +1307,24 @@ var I18N = {
     chat: "Chat", chat_send: "Send", chat_placeholder: "Type a message...",
     chat_empty: "No messages yet", chat_typing: "Typing...",
     chat_not_connected: "Not connected", chat_connected: "Connected",
-    chat_upload: "Upload image", chat_session: "Session"
+    chat_upload: "Upload image", chat_session: "Session",
+    agent_select: "Select Agent", agent_main: "Main Agent"
   },
   "zh-tw": {
     chat: "\u5C0D\u8A71", chat_send: "\u767C\u9001",
     chat_placeholder: "\u8F38\u5165\u8A0A\u606F...",
     chat_empty: "\u5C1A\u7121\u8A0A\u606F", chat_typing: "\u8F38\u5165\u4E2D...",
     chat_not_connected: "\u672A\u9023\u7DDA", chat_connected: "\u5DF2\u9023\u7DDA",
-    chat_upload: "\u4E0A\u50B3\u5716\u7247", chat_session: "\u5DE5\u4F5C\u968E\u6BB5"
+    chat_upload: "\u4E0A\u50B3\u5716\u7247", chat_session: "\u5DE5\u4F5C\u968E\u6BB5",
+    agent_select: "\u9078\u64C7\u4EE3\u7406", agent_main: "\u4E3B\u4EE3\u7406"
   },
   "zh-cn": {
     chat: "\u5BF9\u8BDD", chat_send: "\u53D1\u9001",
     chat_placeholder: "\u8F93\u5165\u6D88\u606F...",
     chat_empty: "\u6682\u65E0\u6D88\u606F", chat_typing: "\u8F93\u5165\u4E2D...",
     chat_not_connected: "\u672A\u8FDE\u63A5", chat_connected: "\u5DF2\u8FDE\u63A5",
-    chat_upload: "\u4E0A\u4F20\u56FE\u7247", chat_session: "\u4F1A\u8BDD"
+    chat_upload: "\u4E0A\u4F20\u56FE\u7247", chat_session: "\u4F1A\u8BDD",
+    agent_select: "\u9009\u62E9\u4EE3\u7406", agent_main: "\u4E3B\u4EE3\u7406"
   }
 };
 
@@ -1574,7 +1577,7 @@ function streamEnd(data) {
   scrollBottom();
 }
 
-var PLUGIN_ICONS = {
+var AGENT_ICONS = {
   "openclaw": "\u{1f916}",
   "ollama": "\u{1f999}",
   "openai-compatible": "\u{1f4a1}",
@@ -1582,29 +1585,60 @@ var PLUGIN_ICONS = {
   "mcp": "\u{1f50c}"
 };
 
-function initPluginSelect(plugins) {
-  var sel = document.getElementById("pluginSelect");
+var activeAgentId = "main";
+var agentsData = [];
+
+function initAgents(agents) {
+  agentsData = agents || [];
+  var sel = document.getElementById("agentSelect");
   sel.innerHTML = "";
-  if (!plugins || plugins.length === 0) {
+  if (!agents || agents.length === 0) {
     sel.style.display = "none";
     return;
   }
-  for (var i = 0; i < plugins.length; i++) {
-    var p = plugins[i];
+  for (var i = 0; i < agents.length; i++) {
+    var a = agents[i];
     var opt = document.createElement("option");
-    opt.value = p.id;
-    var icon = PLUGIN_ICONS[p.type] || "\u{1f50c}";
-    opt.textContent = icon + " " + p.name;
-    if (p.active) opt.selected = true;
+    opt.value = a.id;
+    opt.setAttribute("data-type", a.type || "openclaw");
+    opt.setAttribute("data-session-key", a.sessionKey || a.id);
+    var icon = AGENT_ICONS[a.type] || "\u{1f916}";
+    opt.textContent = icon + " " + a.name;
+    if (a.id === activeAgentId) opt.selected = true;
     sel.appendChild(opt);
   }
   sel.style.display = "";
   sel.onchange = function() {
-    var pluginId = sel.value;
+    var selected = sel.options[sel.selectedIndex];
+    if (!selected) return;
+    var agentId = selected.value;
+    var agentType = selected.getAttribute("data-type") || "openclaw";
+    var sessionKey = selected.getAttribute("data-session-key") || agentId;
+    activeAgentId = agentId;
     window.ipc.postMessage(JSON.stringify({
-      type: "switchPlugin", pluginId: pluginId, sessionKey: "main"
+      type: "switchAgent",
+      agentId: agentId,
+      agentType: agentType,
+      sessionKey: sessionKey
     }));
   };
+}
+
+// Backward compat: initPluginSelect falls through to initAgents
+function initPluginSelect(plugins) {
+  if (!plugins || plugins.length === 0) {
+    document.getElementById("agentSelect").style.display = "none";
+    return;
+  }
+  var agents = plugins.map(function(p) {
+    return {
+      id: p.id,
+      name: p.name,
+      type: p.type,
+      sessionKey: "main"
+    };
+  });
+  initAgents(agents);
 }
 
 function clearChat() {
@@ -1733,10 +1767,17 @@ function switchSession(key) {
   // Also sync hidden select
   document.getElementById("sessionSelect").value = key;
   // Tell Rust to switch session
-  var pluginId = document.getElementById("pluginSelect").value || "";
-  window.ipc.postMessage(JSON.stringify({
-    type: "switchPlugin", pluginId: pluginId, sessionKey: key
-  }));
+  var agentSelEl = document.getElementById("agentSelect");
+  var selectedOpt = agentSelEl.options[agentSelEl.selectedIndex];
+  if (selectedOpt) {
+    var agType = selectedOpt.getAttribute("data-type") || "openclaw";
+    window.ipc.postMessage(JSON.stringify({
+      type: "switchAgent",
+      agentId: agentSelEl.value || activeAgentId,
+      agentType: agType,
+      sessionKey: key
+    }));
+  }
 }
 
 function loadHistory(data) {
@@ -2224,6 +2265,7 @@ var slashCommands = [
   { cmd: "/export", desc: "Export as Markdown" },
   { cmd: "/session", desc: "Switch session", hasArg: true },
   { cmd: "/plugin", desc: "Switch plugin", hasArg: true },
+  { cmd: "/agent", desc: "Switch agent", hasArg: true },
   { cmd: "/model", desc: "Set model", hasArg: true },
   { cmd: "/system", desc: "Set system prompt", hasArg: true },
   { cmd: "/help", desc: "Show commands" },
@@ -2287,9 +2329,24 @@ function executeCommand(cmd, arg) {
       break;
     case "/plugin":
       if (arg) {
-        var plugSel = document.getElementById("pluginSelect");
-        plugSel.value = arg.trim();
-        window.ipc.postMessage(JSON.stringify({ type: "switchPlugin", pluginId: arg.trim(), sessionKey: activeSessionKey }));
+        var agentSel = document.getElementById("agentSelect");
+        agentSel.value = arg.trim();
+        agentSel.onchange && agentSel.onchange();
+      }
+      break;
+    case "/agent":
+      if (arg) {
+        var agSel = document.getElementById("agentSelect");
+        // Try to match by id or name substring
+        var target = arg.trim().toLowerCase();
+        for (var ai = 0; ai < agSel.options.length; ai++) {
+          var o = agSel.options[ai];
+          if (o.value.toLowerCase() === target || o.textContent.toLowerCase().indexOf(target) !== -1) {
+            agSel.selectedIndex = ai;
+            agSel.onchange && agSel.onchange();
+            break;
+          }
+        }
       }
       break;
     case "/model":
@@ -2561,7 +2618,12 @@ function init(data) {
     isPinned = true;
     document.getElementById("pinBtn").classList.add("active");
   }
-  if (data.plugins) initPluginSelect(data.plugins);
+  if (data.activeAgentId) activeAgentId = data.activeAgentId;
+  if (data.agents && data.agents.length) {
+    initAgents(data.agents);
+  } else if (data.plugins) {
+    initPluginSelect(data.plugins);
+  }
   if (data.currentPage && data.currentPage !== "chat") navigateTo(data.currentPage);
   // Init session tabs with whatever sessions we have
   var sessionsForTabs = data.sessions && data.sessions.length ? data.sessions : [{ key: "main", name: "main" }];

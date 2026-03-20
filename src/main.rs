@@ -323,11 +323,17 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                 while let Some(cmd) = gw_rx.recv().await {
                     let plugin_cmd = match cmd {
                         gateway::GatewayCommand::SendChat { message, session_key, attachments } => {
-                            plugin::PluginCommand::SendChat { message, session_key, attachments }
+                            Some(plugin::PluginCommand::SendChat { message, session_key, attachments })
                         }
-                        gateway::GatewayCommand::ListSessions => plugin::PluginCommand::ListSessions,
+                        gateway::GatewayCommand::ListSessions => Some(plugin::PluginCommand::ListSessions),
+                        gateway::GatewayCommand::ListAgents => {
+                            // ListAgents is handled by the gateway directly, not plugins
+                            None
+                        }
                     };
-                    let _ = plugin_tx.send(plugin_cmd);
+                    if let Some(cmd) = plugin_cmd {
+                        let _ = plugin_tx.send(cmd);
+                    }
                 }
             });
             gw_tx

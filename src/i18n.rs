@@ -298,6 +298,11 @@ fn en(key: &str) -> &str {
         "chat_typing" => "Typing...",
         "chat_not_connected" => "Not connected",
 
+        // Agent Switcher
+        "agent_select" => "Select Agent",
+        "agent_main" => "Main Agent",
+        "agent_fallback" => "Main",
+
         // Wave 7: Installer flow
         "install_nodejs" => "Install Node.js",
         "nodejs_required" => "Node.js is required but not installed.",
@@ -459,6 +464,11 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "chat_typing" => "輸入中...",
         "chat_not_connected" => "未連線",
 
+        // Agent Switcher
+        "agent_select" => "選擇代理",
+        "agent_main" => "主代理",
+        "agent_fallback" => "主要",
+
         // Wave 7
         "install_nodejs" => "安裝 Node.js",
         "nodejs_required" => "需要 Node.js 但尚未安裝。",
@@ -613,6 +623,11 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "chat_empty" => "暂无消息",
         "chat_typing" => "输入中...",
         "chat_not_connected" => "未连接",
+
+        // Agent Switcher
+        "agent_select" => "选择代理",
+        "agent_main" => "主代理",
+        "agent_fallback" => "主要",
 
         // Wave 7
         "install_nodejs" => "安装 Node.js",

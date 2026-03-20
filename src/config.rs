@@ -25,6 +25,8 @@ pub struct Config {
     pub update: UpdateConfig,
     #[serde(default)]
     pub defaults: DefaultsConfig,
+    #[serde(default)]
+    pub agents: AgentsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +57,22 @@ pub struct DefaultsConfig {
     pub gateway_host: Option<String>,
     pub gateway_port: Option<String>,
     pub gateway_token: Option<String>,
+}
+
+/// Agent discovery and switching configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentsConfig {
+    /// Which agent to select by default (e.g. "main").
+    pub default: String,
+}
+
+impl Default for AgentsConfig {
+    fn default() -> Self {
+        Self {
+            default: "main".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
