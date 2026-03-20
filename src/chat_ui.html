@@ -1552,7 +1552,8 @@ var _streamScrollTimer = null;
 function streamChunk(data) {
   var ps = pendingStreams[data.id];
   if (!ps) return;
-  ps.raw += data.text;
+  // Gateway sends full accumulated text — REPLACE, not append
+  ps.raw = data.text;
   var b = ps.el.querySelector(".bubble");
   if (b) {
     var prev = b.getAttribute("data-raw") || "";

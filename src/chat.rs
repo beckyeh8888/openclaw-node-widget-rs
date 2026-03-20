@@ -957,7 +957,8 @@ fn process_inbox_to_webview(
             ChatInbound::StreamChunk { msg_id, text } => {
                 if let Some(ref mut ps) = state.pending_stream {
                     if ps.msg_id == msg_id {
-                        ps.text.push_str(&text);
+                        // Gateway sends full accumulated text — replace, not append
+                        ps.text = text.clone();
                     }
                 }
                 let data = json!({ "id": msg_id, "text": text });

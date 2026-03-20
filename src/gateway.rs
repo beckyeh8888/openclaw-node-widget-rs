@@ -785,21 +785,6 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
         return;
     }
 
-    // DEBUG: dump full chat event payload
-    {
-        let line = format!("[{}] state={} runId={:?} seq={:?} msgId={:?} text_len={} full={}\n",
-            chrono::Local::now().format("%H:%M:%S"),
-            payload.get("state").and_then(Value::as_str).unwrap_or("-"),
-            payload.get("runId").and_then(Value::as_str),
-            payload.get("seq").and_then(Value::as_u64),
-            payload.get("msgId").and_then(Value::as_str),
-            payload.get("message").map(|m| format!("{}", m.to_string().len())).unwrap_or_else(|| "-".to_string()),
-            serde_json::to_string(payload).unwrap_or_default().chars().take(300).collect::<String>()
-        );
-        let _ = std::fs::OpenOptions::new().create(true).append(true).open("widget-chat-debug2.log")
-            .map(|mut f| { use std::io::Write; let _ = f.write_all(line.as_bytes()); });
-    }
-
     // Extract text from various Gateway chat event formats:
     // 1. payload.text (simple)
     // 2. payload.message (string)
@@ -949,23 +934,9 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
                         text: String::new(),
                     });
                 }
-                // Gateway sends full accumulated text (not just the delta).
-                // Compute the actual delta by stripping the already-seen prefix.
-                let full_text = payload
-                    .get("delta")
-                    .and_then(Value::as_str)
-                    .unwrap_or(&text);
-                let already_len = cs
-                    .pending_stream
-                    .as_ref()
-                    .filter(|ps| ps.msg_id == *mid)
-                    .map(|ps| ps.text.len())
-                    .unwrap_or(0);
-                let chunk = if full_text.len() > already_len {
-                    &full_text[already_len..]
-                } else {
-                    full_text
-                };
+                // Gateway sends full accumulated text (not delta).
+                // Send the FULL text as the chunk — HTML side will REPLACE (not append).
+                let chunk = &text;
                 if !chunk.is_empty() {
                     cs.inbox.push(crate::chat::ChatInbound::StreamChunk {
                         msg_id: mid.clone(),
@@ -974,7 +945,7 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
                     // Update pending_stream text to track accumulated content
                     if let Some(ref mut ps) = cs.pending_stream {
                         if ps.msg_id == *mid {
-                            ps.text = full_text.to_string();
+                            ps.text = text.clone();
                         }
                     }
                 }
