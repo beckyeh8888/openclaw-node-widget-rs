@@ -1823,8 +1823,12 @@ function sendMsg() {
   if (!text && !attachment) return;
   if (!connected) return;
 
-  var msg = { type: "send", message: text,
-    sessionKey: document.getElementById("sessionSelect").value || null };
+  // Get session key from active agent (agent switcher), fallback to session selector
+  var agentSel = document.getElementById("agentSelect");
+  var activeOpt = agentSel && agentSel.selectedOptions[0];
+  var sk = (activeOpt && activeOpt.getAttribute("data-session-key")) || 
+           document.getElementById("sessionSelect").value || null;
+  var msg = { type: "send", message: text, sessionKey: sk };
   if (attachment) msg.attachments = [attachment];
 
   window.ipc.postMessage(JSON.stringify(msg));

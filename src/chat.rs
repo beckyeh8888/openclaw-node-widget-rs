@@ -529,12 +529,13 @@ pub fn handle_ipc_message(
             let session_key = msg
                 .get("sessionKey")
                 .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
                 .map(String::from)
                 .or_else(|| {
                     chat_state
                         .lock()
                         .ok()
-                        .and_then(|s| s.selected_session.clone())
+                        .map(|s| s.active_session_key.clone())
                 });
 
             let attachments: Option<Vec<ChatAttachment>> = msg
