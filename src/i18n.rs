@@ -297,6 +297,40 @@ fn en<'a>(key: &'a str) -> &'a str {
         "chat_typing" => "Typing...",
         "chat_not_connected" => "Not connected",
 
+        // Wave 7: Installer flow
+        "install_nodejs" => "Install Node.js",
+        "nodejs_required" => "Node.js is required but not installed.",
+        "nodejs_install_win" => "Downloading and installing Node.js LTS...",
+        "nodejs_install_mac" => "Please download and install Node.js from nodejs.org.",
+        "nodejs_install_linux" => "Run: curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -",
+        "installing" => "Installing...",
+        "install_failed" => "Installation failed",
+        "retry" => "Retry",
+
+        // Wave 7: Tailscale step
+        "tailscale_step_title" => "Tailscale (Optional)",
+        "tailscale_optional_desc" => "Tailscale enables secure VPN access to your Gateway from anywhere.",
+        "tailscale_install_btn" => "Install Tailscale",
+        "tailscale_skip" => "Skip",
+        "tailscale_disconnected_msg" => "Tailscale is installed but not connected. Please login first.",
+        "tailscale_open_btn" => "Open Tailscale",
+        "tailscale_connected_label" => "Tailscale: Connected",
+        "tailscale_select_gateway" => "Select your Gateway machine:",
+
+        // Wave 7: Connection test
+        "test_connection" => "Test Connection",
+        "connection_success" => "Connected",
+        "connection_failed" => "Cannot connect to Gateway",
+        "connection_failed_hint" => "Is the Gateway running?",
+
+        // Wave 7: Pairing step
+        "pairing_title" => "Pairing",
+        "pairing_checking" => "Checking pairing status...",
+        "pairing_waiting" => "Waiting for approval from Gateway admin...",
+        "pairing_approved" => "Paired successfully!",
+        "pairing_timeout" => "Pairing timed out. Please try again.",
+        "pairing_already_paired" => "Already paired",
+
         _ => key,
     }
 }
@@ -424,6 +458,34 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "chat_typing" => "輸入中...",
         "chat_not_connected" => "未連線",
 
+        // Wave 7
+        "install_nodejs" => "安裝 Node.js",
+        "nodejs_required" => "需要 Node.js 但尚未安裝。",
+        "nodejs_install_win" => "正在下載並安裝 Node.js LTS...",
+        "nodejs_install_mac" => "請從 nodejs.org 下載並安裝 Node.js。",
+        "nodejs_install_linux" => "執行: curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -",
+        "installing" => "安裝中...",
+        "install_failed" => "安裝失敗",
+        "retry" => "重試",
+        "tailscale_step_title" => "Tailscale（選用）",
+        "tailscale_optional_desc" => "Tailscale 可讓您從任何地方安全存取閘道。",
+        "tailscale_install_btn" => "安裝 Tailscale",
+        "tailscale_skip" => "略過",
+        "tailscale_disconnected_msg" => "Tailscale 已安裝但未連線。請先登入。",
+        "tailscale_open_btn" => "開啟 Tailscale",
+        "tailscale_connected_label" => "Tailscale: 已連線",
+        "tailscale_select_gateway" => "選擇您的閘道主機：",
+        "test_connection" => "測試連線",
+        "connection_success" => "已連線",
+        "connection_failed" => "無法連線到閘道",
+        "connection_failed_hint" => "閘道是否正在運行？",
+        "pairing_title" => "配對",
+        "pairing_checking" => "正在檢查配對狀態...",
+        "pairing_waiting" => "等待閘道管理員核准...",
+        "pairing_approved" => "配對成功！",
+        "pairing_timeout" => "配對逾時。請重試。",
+        "pairing_already_paired" => "已配對",
+
         _ => return None,
     })
 }
@@ -550,6 +612,34 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "chat_empty" => "暂无消息",
         "chat_typing" => "输入中...",
         "chat_not_connected" => "未连接",
+
+        // Wave 7
+        "install_nodejs" => "安装 Node.js",
+        "nodejs_required" => "需要 Node.js 但尚未安装。",
+        "nodejs_install_win" => "正在下载并安装 Node.js LTS...",
+        "nodejs_install_mac" => "请从 nodejs.org 下载并安装 Node.js。",
+        "nodejs_install_linux" => "运行: curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -",
+        "installing" => "安装中...",
+        "install_failed" => "安装失败",
+        "retry" => "重试",
+        "tailscale_step_title" => "Tailscale（可选）",
+        "tailscale_optional_desc" => "Tailscale 可让您从任何地方安全访问网关。",
+        "tailscale_install_btn" => "安装 Tailscale",
+        "tailscale_skip" => "跳过",
+        "tailscale_disconnected_msg" => "Tailscale 已安装但未连接。请先登录。",
+        "tailscale_open_btn" => "打开 Tailscale",
+        "tailscale_connected_label" => "Tailscale: 已连接",
+        "tailscale_select_gateway" => "选择您的网关主机：",
+        "test_connection" => "测试连接",
+        "connection_success" => "已连接",
+        "connection_failed" => "无法连接到网关",
+        "connection_failed_hint" => "网关是否正在运行？",
+        "pairing_title" => "配对",
+        "pairing_checking" => "正在检查配对状态...",
+        "pairing_waiting" => "等待网关管理员批准...",
+        "pairing_approved" => "配对成功！",
+        "pairing_timeout" => "配对超时。请重试。",
+        "pairing_already_paired" => "已配对",
 
         _ => return None,
     })

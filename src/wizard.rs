@@ -1,4 +1,5 @@
 use std::{
+    net::TcpStream,
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     sync::{Arc, Mutex},
@@ -13,14 +14,16 @@ use crate::{
     error::{AppError, Result},
     i18n::t,
     setup::{find_node_script, parse_node_script, ScriptDetection},
-    tailscale::TailscalePeer,
+    tailscale::{TailscalePeer, TailscaleStatus},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WizardStep {
     Welcome,
     DetectInstall,
+    Tailscale,
     Gateway,
+    Pairing,
     Autostart,
     Complete,
 }
@@ -49,7 +52,7 @@ pub fn run_setup_wizard(initial_config: &Config) -> Result<Option<Config>> {
     let app_config = initial_config.clone();
 
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([500.0, 400.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([500.0, 440.0]),
         ..Default::default()
     };
 
@@ -79,6 +82,27 @@ pub fn run_setup_wizard(initial_config: &Config) -> Result<Option<Config>> {
     Ok(saved)
 }
 
+/// Result of a Gateway TCP connection test.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConnectionTestResult {
+    Untested,
+    Success,
+    Failed(String),
+}
+
+/// Pairing status from the Gateway.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PairingStatus {
+    Unknown,
+    Checking,
+    AlreadyPaired,
+    Waiting,
+    #[allow(dead_code)]
+    Approved,
+    TimedOut,
+    Failed(String),
+}
+
 struct SetupWizardApp {
     step: WizardStep,
     base_config: Config,
@@ -88,6 +112,8 @@ struct SetupWizardApp {
     detect_message: String,
     detect_error: Option<String>,
     npm_available: bool,
+    nodejs_available: bool,
+    installing_nodejs: bool,
     host: String,
     port: String,
     token: String,
@@ -97,12 +123,33 @@ struct SetupWizardApp {
     finish_error: Option<String>,
     dark_mode_applied: bool,
     tailscale_peers: Vec<TailscalePeer>,
-    tailscale_detected: bool,
+    tailscale_status: TailscaleStatus,
     selected_peer_index: Option<usize>,
+    connection_test: ConnectionTestResult,
+    pairing_status: PairingStatus,
+    pairing_start: Option<Instant>,
 }
 
 impl SetupWizardApp {
     fn new(base_config: Config, shared: Arc<Mutex<WizardSharedState>>) -> Self {
+        // Pre-fill from defaults if present
+        let default_host = base_config
+            .defaults
+            .gateway_host
+            .clone()
+            .unwrap_or_default();
+        let default_port = base_config
+            .defaults
+            .gateway_port
+            .clone()
+            .unwrap_or_default();
+        let default_token = base_config
+            .defaults
+            .gateway_token
+            .clone()
+            .or_else(|| base_config.gateway.token.clone())
+            .unwrap_or_default();
+
         let mut app = Self {
             step: WizardStep::Welcome,
             script_path: None,
@@ -110,9 +157,11 @@ impl SetupWizardApp {
             detect_message: String::new(),
             detect_error: None,
             npm_available: false,
-            host: String::new(),
-            port: String::new(),
-            token: base_config.gateway.token.clone().unwrap_or_default(),
+            nodejs_available: false,
+            installing_nodejs: false,
+            host: default_host,
+            port: default_port,
+            token: default_token,
             node_command: display_node_command(&base_config),
             auto_start: if config_exists() {
                 autostart::effective_autostart(&base_config)
@@ -123,8 +172,11 @@ impl SetupWizardApp {
             finish_error: None,
             dark_mode_applied: false,
             tailscale_peers: Vec::new(),
-            tailscale_detected: false,
+            tailscale_status: TailscaleStatus::NotInstalled,
             selected_peer_index: None,
+            connection_test: ConnectionTestResult::Untested,
+            pairing_status: PairingStatus::Unknown,
+            pairing_start: None,
             base_config,
             shared,
         };
@@ -145,8 +197,8 @@ impl SetupWizardApp {
     }
 
     fn detect_tailscale(&mut self) {
+        self.tailscale_status = crate::tailscale::check_status();
         let peers = crate::tailscale::detect_peers();
-        self.tailscale_detected = !peers.is_empty();
         self.tailscale_peers = peers;
         self.selected_peer_index = None;
     }
@@ -156,12 +208,14 @@ impl SetupWizardApp {
         self.script_path = find_node_script();
         self.detection = None;
         self.detect_tailscale();
+        self.nodejs_available = crate::config::detect_nodejs();
 
         if let Some(path) = &self.script_path {
             match parse_node_script(path) {
                 Ok(parsed) => {
                     self.detection = parsed;
-                    self.detect_message = format!("Found node script: {}", path.display());
+                    self.detect_message =
+                        format!("{}{}", t("found_node_script"), path.display());
 
                     if let Some(detected) = &self.detection {
                         if let Some(host) = &detected.host {
@@ -178,7 +232,8 @@ impl SetupWizardApp {
                     self.node_command = path.to_string_lossy().to_string();
                 }
                 Err(err) => {
-                    self.detect_message = format!("Found node script: {}", path.display());
+                    self.detect_message =
+                        format!("{}{}", t("found_node_script"), path.display());
                     self.detect_error = Some(format!("Failed to parse node script: {err}"));
                 }
             }
@@ -187,7 +242,7 @@ impl SetupWizardApp {
             return;
         }
 
-        self.detect_message = "No node script found in ~/.openclaw".to_string();
+        self.detect_message = t("no_node_script").to_string();
         self.npm_available = check_npm_available();
     }
 
@@ -195,14 +250,30 @@ impl SetupWizardApp {
         self.detect_error = None;
 
         if !self.npm_available {
-            self.detect_error = Some("npm is not available. Install Node.js first.".to_string());
+            self.detect_error = Some(t("npm_not_found").to_string());
             return;
+        }
+
+        // Use pre-configured defaults for openclaw node setup if available
+        let mut setup_args: Vec<&str> = vec!["node", "setup"];
+        let host_flag;
+        let port_flag;
+
+        if let Some(h) = &self.base_config.defaults.gateway_host {
+            host_flag = h.clone();
+            setup_args.push("--host");
+            setup_args.push(&host_flag);
+        }
+        if let Some(p) = &self.base_config.defaults.gateway_port {
+            port_flag = p.clone();
+            setup_args.push("--port");
+            setup_args.push(&port_flag);
         }
 
         match run_command_with_timeout(
             "npm",
             &["install", "-g", "openclaw"],
-            Duration::from_secs(10),
+            Duration::from_secs(120),
         ) {
             Ok(output) if output.status.success() => {}
             Ok(output) => {
@@ -224,9 +295,10 @@ impl SetupWizardApp {
             "openclaw"
         };
 
-        match run_command_with_timeout(openclaw_cmd, &["node", "setup"], Duration::from_secs(10)) {
+        let setup_arg_refs: Vec<&str> = setup_args.to_vec();
+        match run_command_with_timeout(openclaw_cmd, &setup_arg_refs, Duration::from_secs(30)) {
             Ok(output) if output.status.success() => {
-                self.detect_message = "OpenClaw node setup completed.".to_string();
+                self.detect_message = t("setup_completed").to_string();
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -242,6 +314,192 @@ impl SetupWizardApp {
         }
 
         self.refresh_detection();
+    }
+
+    /// Platform-specific Node.js install flow.
+    fn install_nodejs(&mut self) {
+        self.installing_nodejs = true;
+        self.detect_error = None;
+
+        #[cfg(windows)]
+        {
+            // Windows: attempt silent MSI install
+            self.detect_error = Some(t("nodejs_install_win").to_string());
+            // Download LTS info
+            match run_command_with_timeout(
+                "powershell",
+                &[
+                    "-Command",
+                    "(Invoke-WebRequest -Uri 'https://nodejs.org/dist/index.json' -UseBasicParsing).Content | ConvertFrom-Json | Where-Object { $_.lts -ne $false } | Select-Object -First 1 -ExpandProperty version",
+                ],
+                Duration::from_secs(30),
+            ) {
+                Ok(output) if output.status.success() => {
+                    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !version.is_empty() {
+                        let msi_url = format!(
+                            "https://nodejs.org/dist/{version}/node-{version}-x64.msi"
+                        );
+                        let temp_dir = std::env::temp_dir();
+                        let msi_path = temp_dir.join(format!("node-{version}-x64.msi"));
+                        let msi_path_str = msi_path.to_string_lossy().to_string();
+
+                        // Download MSI
+                        match run_command_with_timeout(
+                            "powershell",
+                            &[
+                                "-Command",
+                                &format!(
+                                    "Invoke-WebRequest -Uri '{msi_url}' -OutFile '{msi_path_str}'"
+                                ),
+                            ],
+                            Duration::from_secs(120),
+                        ) {
+                            Ok(dl) if dl.status.success() => {
+                                // Run MSI silently
+                                match run_command_with_timeout(
+                                    "msiexec",
+                                    &["/i", &msi_path_str, "/quiet", "/norestart"],
+                                    Duration::from_secs(120),
+                                ) {
+                                    Ok(inst) if inst.status.success() => {
+                                        self.detect_error = None;
+                                        self.nodejs_available = true;
+                                        self.npm_available = check_npm_available();
+                                    }
+                                    Ok(inst) => {
+                                        let stderr =
+                                            String::from_utf8_lossy(&inst.stderr).trim().to_string();
+                                        self.detect_error =
+                                            Some(format!("{}: {stderr}", t("install_failed")));
+                                    }
+                                    Err(e) => {
+                                        self.detect_error =
+                                            Some(format!("{}: {e}", t("install_failed")));
+                                    }
+                                }
+                                // Cleanup temp MSI
+                                let _ = std::fs::remove_file(&msi_path);
+                            }
+                            Ok(_) => {
+                                self.detect_error =
+                                    Some(format!("{}: download failed", t("install_failed")));
+                            }
+                            Err(e) => {
+                                self.detect_error =
+                                    Some(format!("{}: {e}", t("install_failed")));
+                            }
+                        }
+                    } else {
+                        self.detect_error =
+                            Some(format!("{}: could not determine LTS version", t("install_failed")));
+                    }
+                }
+                Ok(_) | Err(_) => {
+                    self.detect_error =
+                        Some(format!("{}: could not fetch Node.js version info", t("install_failed")));
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            // macOS: open nodejs.org in browser
+            let _ = open::that("https://nodejs.org");
+            self.detect_error = Some(t("nodejs_install_mac").to_string());
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            // Linux: show install command hint
+            self.detect_error = Some(t("nodejs_install_linux").to_string());
+        }
+
+        self.installing_nodejs = false;
+    }
+
+    /// Test TCP connection to the configured Gateway host:port.
+    fn test_connection(&mut self) {
+        let host = strip_ws_scheme(self.host.trim());
+        let port = self.port.trim();
+
+        if host.is_empty() || port.is_empty() {
+            self.connection_test =
+                ConnectionTestResult::Failed("Host and port are required".to_string());
+            return;
+        }
+
+        let addr = format!("{host}:{port}");
+        match TcpStream::connect_timeout(
+            &addr.parse().unwrap_or_else(|_| {
+                // Fallback: try to resolve
+                use std::net::ToSocketAddrs;
+                addr.to_socket_addrs()
+                    .ok()
+                    .and_then(|mut a| a.next())
+                    .unwrap_or_else(|| "0.0.0.0:0".parse().unwrap())
+            }),
+            Duration::from_secs(5),
+        ) {
+            Ok(_) => {
+                self.connection_test = ConnectionTestResult::Success;
+            }
+            Err(e) => {
+                self.connection_test = ConnectionTestResult::Failed(e.to_string());
+            }
+        }
+    }
+
+    /// Check pairing status via HTTP GET to the Gateway API.
+    fn check_pairing(&mut self) {
+        let host = strip_ws_scheme(self.host.trim());
+        let port = self.port.trim();
+
+        if host.is_empty() || port.is_empty() {
+            self.pairing_status = PairingStatus::Failed("Gateway not configured".to_string());
+            return;
+        }
+
+        self.pairing_status = PairingStatus::Checking;
+        let url = format!("http://{host}:{port}/api/nodes");
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build();
+
+        let client = match client {
+            Ok(c) => c,
+            Err(e) => {
+                self.pairing_status = PairingStatus::Failed(e.to_string());
+                return;
+            }
+        };
+
+        let mut request = client.get(&url);
+        if !self.token.trim().is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", self.token.trim()));
+        }
+
+        match request.send() {
+            Ok(resp) if resp.status().is_success() => {
+                // If we can reach /api/nodes, consider it paired
+                self.pairing_status = PairingStatus::AlreadyPaired;
+            }
+            Ok(resp) if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 => {
+                // Not yet authorized — waiting for approval
+                self.pairing_status = PairingStatus::Waiting;
+                if self.pairing_start.is_none() {
+                    self.pairing_start = Some(Instant::now());
+                }
+            }
+            Ok(resp) => {
+                self.pairing_status =
+                    PairingStatus::Failed(format!("HTTP {}", resp.status()));
+            }
+            Err(e) => {
+                self.pairing_status = PairingStatus::Failed(e.to_string());
+            }
+        }
     }
 
     fn finish_setup(&mut self) {
@@ -309,48 +567,63 @@ impl SetupWizardApp {
 
     fn nav_buttons(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.horizontal(|ui| {
-            if self.step != WizardStep::Welcome && self.step != WizardStep::Complete {
-                if ui.button("Back").clicked() {
-                    self.step = match self.step {
-                        WizardStep::DetectInstall => WizardStep::Welcome,
-                        WizardStep::Gateway => WizardStep::DetectInstall,
-                        WizardStep::Autostart => WizardStep::Gateway,
-                        _ => self.step,
-                    };
-                }
+            if self.step != WizardStep::Welcome
+                && self.step != WizardStep::Complete
+                && ui.button(t("back")).clicked()
+            {
+                self.step = match self.step {
+                    WizardStep::DetectInstall => WizardStep::Welcome,
+                    WizardStep::Tailscale => WizardStep::DetectInstall,
+                    WizardStep::Gateway => WizardStep::Tailscale,
+                    WizardStep::Pairing => WizardStep::Gateway,
+                    WizardStep::Autostart => WizardStep::Pairing,
+                    _ => self.step,
+                };
             }
 
-            if self.step != WizardStep::Complete {
-                if ui.button("Cancel").clicked() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
+            if self.step != WizardStep::Complete
+                && ui.button(t("cancel")).clicked()
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
 
             ui.with_layout(
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| match self.step {
                     WizardStep::Welcome => {
-                        if ui.button("Next").clicked() {
+                        if ui.button(t("next")).clicked() {
                             self.step = WizardStep::DetectInstall;
                         }
                     }
                     WizardStep::DetectInstall => {
-                        if ui.button("Next").clicked() {
+                        if ui.button(t("next")).clicked() {
+                            self.step = WizardStep::Tailscale;
+                        }
+                    }
+                    WizardStep::Tailscale => {
+                        if ui.button(t("next")).clicked() {
                             self.step = WizardStep::Gateway;
                         }
                     }
                     WizardStep::Gateway => {
-                        if ui.button("Next").clicked() {
+                        if ui.button(t("next")).clicked() {
+                            self.pairing_status = PairingStatus::Unknown;
+                            self.pairing_start = None;
+                            self.step = WizardStep::Pairing;
+                        }
+                    }
+                    WizardStep::Pairing => {
+                        if ui.button(t("next")).clicked() {
                             self.step = WizardStep::Autostart;
                         }
                     }
                     WizardStep::Autostart => {
-                        if ui.button("Finish").clicked() {
+                        if ui.button(t("finish")).clicked() {
                             self.finish_setup();
                         }
                     }
                     WizardStep::Complete => {
-                        if ui.button("Done").clicked() {
+                        if ui.button(t("done")).clicked() {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                     }
@@ -369,17 +642,17 @@ impl eframe::App for SetupWizardApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("OpenClaw Node Widget Setup");
+            ui.heading(t("wizard_title"));
             ui.add_space(12.0);
 
             match self.step {
                 WizardStep::Welcome => {
-                    ui.heading("Welcome");
-                    ui.label("Welcome to OpenClaw Node Widget.");
-                    ui.label("This wizard will help you set up your OpenClaw Node connection.");
+                    ui.heading(t("welcome"));
+                    ui.label(t("welcome_msg"));
+                    ui.label(t("welcome_desc"));
                 }
                 WizardStep::DetectInstall => {
-                    ui.heading("Detect / Install Node");
+                    ui.heading(t("detect_install"));
                     ui.label(&self.detect_message);
 
                     if let Some(path) = &self.script_path {
@@ -388,31 +661,50 @@ impl eframe::App for SetupWizardApp {
 
                     if let Some(detected) = &self.detection {
                         if let Some(host) = &detected.host {
-                            ui.label(format!("Detected host: {host}"));
+                            ui.label(format!("{}{host}", t("detected_host")));
                         }
                         if let Some(port) = &detected.port {
-                            ui.label(format!("Detected port: {port}"));
+                            ui.label(format!("{}{port}", t("detected_port")));
                         }
                         if let Some(token) = &detected.token {
-                            ui.label(format!("Detected token: {token}"));
+                            ui.label(format!("{}{token}", t("detected_token")));
                         }
                     }
 
                     if self.script_path.is_none() {
                         if self.npm_available {
-                            ui.label("npm is available. You can install OpenClaw now.");
-                            if ui.button("Install OpenClaw Node").clicked() {
+                            ui.label(t("npm_available"));
+                            if ui.button(t("install_openclaw")).clicked() {
                                 self.run_install_flow();
                             }
-                        } else {
-                            ui.label("npm not found. Please install Node.js first.");
-                            if ui.button("Open nodejs.org").clicked() {
+                        } else if self.nodejs_available {
+                            // Node.js exists but npm check failed — still offer install
+                            ui.label(t("npm_not_found"));
+                            if ui.button(t("open_nodejs")).clicked() {
                                 let _ = open::that("https://nodejs.org");
+                            }
+                        } else {
+                            // No Node.js at all
+                            ui.label(t("nodejs_required"));
+                            ui.add_space(4.0);
+
+                            if cfg!(windows) {
+                                if ui.button(t("install_nodejs")).clicked() {
+                                    self.install_nodejs();
+                                }
+                            } else if cfg!(target_os = "macos") {
+                                if ui.button(t("install_nodejs")).clicked() {
+                                    self.install_nodejs();
+                                }
+                                ui.label(t("nodejs_install_mac"));
+                            } else {
+                                // Linux
+                                ui.label(t("nodejs_install_linux"));
                             }
                         }
                     }
 
-                    if ui.button("Re-detect").clicked() {
+                    if ui.button(t("redetect")).clicked() {
                         self.refresh_detection();
                     }
 
@@ -420,42 +712,102 @@ impl eframe::App for SetupWizardApp {
                         ui.colored_label(egui::Color32::from_rgb(220, 80, 80), err);
                     }
                 }
-                WizardStep::Gateway => {
-                    ui.heading(t("gateway_config"));
+                WizardStep::Tailscale => {
+                    ui.heading(t("tailscale_step_title"));
 
-                    // Tailscale peer selection
-                    if self.tailscale_detected {
-                        ui.add_space(4.0);
-                        ui.label(t("tailscale_peers_found"));
+                    match self.tailscale_status {
+                        TailscaleStatus::NotInstalled => {
+                            ui.add_space(8.0);
+                            ui.label(t("tailscale_optional_desc"));
+                            ui.add_space(8.0);
 
-                        let peers = self.tailscale_peers.clone();
-                        let mut selected = self.selected_peer_index;
+                            ui.horizontal(|ui| {
+                                if ui.button(t("tailscale_install_btn")).clicked() {
+                                    let _ =
+                                        open::that("https://tailscale.com/download");
+                                }
+                                if ui.button(t("tailscale_skip")).clicked() {
+                                    self.step = WizardStep::Gateway;
+                                }
+                            });
+                        }
+                        TailscaleStatus::Disconnected => {
+                            ui.add_space(8.0);
+                            ui.label(t("tailscale_disconnected_msg"));
+                            ui.add_space(8.0);
 
-                        for (i, peer) in peers.iter().enumerate() {
-                            let label = format!("{} ({})", peer.hostname, peer.ip);
-                            let is_selected = selected == Some(i);
-                            if ui.selectable_label(is_selected, &label).clicked() {
-                                selected = Some(i);
-                                self.host = peer.ip.clone();
-                                self.port = "18789".to_string();
+                            ui.horizontal(|ui| {
+                                if ui.button(t("tailscale_open_btn")).clicked() {
+                                    // Try to open Tailscale app
+                                    #[cfg(target_os = "macos")]
+                                    {
+                                        let _ = open::that(
+                                            "file:///Applications/Tailscale.app",
+                                        );
+                                    }
+                                    #[cfg(target_os = "linux")]
+                                    {
+                                        let _ = Command::new("tailscale")
+                                            .arg("up")
+                                            .spawn();
+                                    }
+                                    #[cfg(windows)]
+                                    {
+                                        let _ = open::that(
+                                            "tailscale:",
+                                        );
+                                    }
+                                }
+                                if ui.button(t("tailscale_skip")).clicked() {
+                                    self.step = WizardStep::Gateway;
+                                }
+                            });
+
+                            if ui.button(t("redetect")).clicked() {
+                                self.detect_tailscale();
                             }
                         }
+                        TailscaleStatus::Connected => {
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(t("tailscale_connected_label"))
+                                    .color(egui::Color32::from_rgb(100, 200, 100)),
+                            );
+                            ui.add_space(8.0);
+                            ui.label(t("tailscale_select_gateway"));
 
-                        if ui.selectable_label(selected.is_none(), t("tailscale_manual_entry")).clicked() {
-                            selected = None;
+                            let peers = self.tailscale_peers.clone();
+                            let mut selected = self.selected_peer_index;
+
+                            for (i, peer) in peers.iter().enumerate() {
+                                let label =
+                                    format!("{} ({})", peer.hostname, peer.ip);
+                                let is_selected = selected == Some(i);
+                                if ui
+                                    .selectable_label(is_selected, &label)
+                                    .clicked()
+                                {
+                                    selected = Some(i);
+                                    self.host = peer.ip.clone();
+                                    self.port = "18789".to_string();
+                                }
+                            }
+
+                            if ui
+                                .selectable_label(
+                                    selected.is_none(),
+                                    t("tailscale_manual_entry"),
+                                )
+                                .clicked()
+                            {
+                                selected = None;
+                            }
+                            self.selected_peer_index = selected;
                         }
-                        self.selected_peer_index = selected;
-
-                        ui.add_space(4.0);
-                        ui.separator();
-                    } else {
-                        ui.add_space(4.0);
-                        ui.label(
-                            egui::RichText::new(t("tailscale_hint"))
-                                .color(egui::Color32::from_rgb(150, 150, 150))
-                                .italics(),
-                        );
                     }
+                }
+                WizardStep::Gateway => {
+                    ui.heading(t("gateway_config"));
 
                     ui.add_space(4.0);
                     ui.label(t("gateway_host"));
@@ -466,10 +818,104 @@ impl eframe::App for SetupWizardApp {
                     ui.text_edit_singleline(&mut self.token);
                     ui.label(t("node_command"));
                     ui.text_edit_singleline(&mut self.node_command);
+
+                    ui.add_space(8.0);
+
+                    // Connection test button
+                    if ui.button(t("test_connection")).clicked() {
+                        self.test_connection();
+                    }
+
+                    match &self.connection_test {
+                        ConnectionTestResult::Untested => {}
+                        ConnectionTestResult::Success => {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(100, 200, 100),
+                                format!("\u{2705} {}", t("connection_success")),
+                            );
+                        }
+                        ConnectionTestResult::Failed(msg) => {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(220, 80, 80),
+                                format!(
+                                    "\u{274C} {} — {}",
+                                    t("connection_failed"),
+                                    t("connection_failed_hint")
+                                ),
+                            );
+                            ui.label(
+                                egui::RichText::new(msg)
+                                    .color(egui::Color32::from_rgb(150, 150, 150))
+                                    .small(),
+                            );
+                        }
+                    }
+                }
+                WizardStep::Pairing => {
+                    ui.heading(t("pairing_title"));
+                    ui.add_space(8.0);
+
+                    // Auto-check pairing on first render of this step
+                    if self.pairing_status == PairingStatus::Unknown {
+                        self.check_pairing();
+                    }
+
+                    match &self.pairing_status {
+                        PairingStatus::Unknown | PairingStatus::Checking => {
+                            ui.label(t("pairing_checking"));
+                            ui.spinner();
+                        }
+                        PairingStatus::AlreadyPaired => {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(100, 200, 100),
+                                format!("\u{2705} {}", t("pairing_already_paired")),
+                            );
+                        }
+                        PairingStatus::Waiting => {
+                            ui.label(t("pairing_waiting"));
+                            ui.spinner();
+
+                            // Check for timeout (120s)
+                            if let Some(start) = self.pairing_start {
+                                if start.elapsed() > Duration::from_secs(120) {
+                                    self.pairing_status = PairingStatus::TimedOut;
+                                }
+                            }
+
+                            // Auto-poll every ~3s by requesting repaint
+                            ctx.request_repaint_after(Duration::from_secs(3));
+                        }
+                        PairingStatus::Approved => {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(100, 200, 100),
+                                format!("\u{2705} {}", t("pairing_approved")),
+                            );
+                        }
+                        PairingStatus::TimedOut => {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(220, 180, 50),
+                                t("pairing_timeout"),
+                            );
+                            if ui.button(t("retry")).clicked() {
+                                self.pairing_status = PairingStatus::Unknown;
+                                self.pairing_start = None;
+                            }
+                        }
+                        PairingStatus::Failed(msg) => {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(220, 80, 80),
+                                msg,
+                            );
+                            if ui.button(t("retry")).clicked() {
+                                self.pairing_status = PairingStatus::Unknown;
+                                self.pairing_start = None;
+                            }
+                        }
+                    }
                 }
                 WizardStep::Autostart => {
-                    ui.heading("Autostart");
-                    ui.checkbox(&mut self.auto_start, "Start widget on login");
+                    ui.heading(t("autostart"));
+                    ui.checkbox(&mut self.auto_start, t("start_on_login"));
 
                     if should_offer_install() {
                         ui.add_space(12.0);
@@ -477,7 +923,9 @@ impl eframe::App for SetupWizardApp {
                             &mut self.install_to_system,
                             "Install to system (Recommended)",
                         );
-                        ui.label("Installs to a standard location, adds Start Menu shortcut.");
+                        ui.label(
+                            "Installs to a standard location, adds Start Menu shortcut.",
+                        );
                     }
 
                     if let Some(err) = &self.finish_error {
@@ -486,8 +934,8 @@ impl eframe::App for SetupWizardApp {
                     }
                 }
                 WizardStep::Complete => {
-                    ui.heading("Complete");
-                    ui.label("Setup complete! The widget will now start monitoring your node.");
+                    ui.heading(t("complete"));
+                    ui.label(t("complete_msg"));
                 }
             }
 

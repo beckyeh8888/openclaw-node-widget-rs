@@ -23,6 +23,8 @@ pub struct Config {
     pub tts: TtsConfig,
     #[serde(default)]
     pub update: UpdateConfig,
+    #[serde(default)]
+    pub defaults: DefaultsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +45,16 @@ impl Default for UpdateConfig {
             check_interval_hours: 6,
         }
     }
+}
+
+/// Pre-configured defaults for deploying to clients.
+/// If a `[defaults]` section exists next to the exe, the wizard pre-fills these values.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DefaultsConfig {
+    pub gateway_host: Option<String>,
+    pub gateway_port: Option<String>,
+    pub gateway_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -214,6 +226,7 @@ impl Default for Config {
             voice: VoiceConfig::default(),
             tts: TtsConfig::default(),
             update: UpdateConfig::default(),
+            defaults: DefaultsConfig::default(),
         }
     }
 }
@@ -479,6 +492,19 @@ impl Config {
         fs::write(path, content)?;
         Ok(())
     }
+}
+
+/// Check whether Node.js (npm) is available on this system.
+pub fn detect_nodejs() -> bool {
+    use std::process::{Command, Stdio};
+    Command::new("node")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 pub fn app_dir() -> Result<PathBuf> {
