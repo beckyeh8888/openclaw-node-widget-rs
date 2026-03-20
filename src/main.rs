@@ -669,11 +669,12 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                     });
                 }
                 TrayCommand::OpenChat => {
-                    // Prefer plugin command sender; fall back to gateway cmd
-                    if let Some(plugin_tx) = plugin_registry.active_command_sender() {
+                    // Prefer plugin command senders map; fall back to gateway cmd
+                    let senders = plugin_registry.command_senders();
+                    if !senders.is_empty() {
                         chat::run_chat_window_plugin(
                             Arc::clone(&chat_state),
-                            plugin_tx,
+                            senders,
                         )?;
                     } else if let Some(ref cmd_tx) = gateway_cmd_tx {
                         chat::run_chat_window(

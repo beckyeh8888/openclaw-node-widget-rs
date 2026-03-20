@@ -1101,7 +1101,7 @@ mark.search-highlight.current {
   <div id="page-chat" class="page active">
     <div id="header">
       <span class="header-title">🤖 <span id="headerChat">Chat</span></span>
-      <select id="pluginSelect" style="display:none;background:#2d2d44;color:#fff;border:1px solid #3d3d5c;border-radius:8px;padding:3px 8px;font-size:13px;outline:none;cursor:pointer;max-width:120px;"></select>
+      <select id="pluginSelect" style="background:var(--bg-input);color:var(--text-primary);border:1px solid var(--border-light);border-radius:8px;padding:3px 8px;font-size:13px;outline:none;cursor:pointer;max-width:180px;"></select>
       <div id="sessionTabs" class="session-tabs"></div>
       <select id="sessionSelect" style="display:none;"><option value="">main</option></select>
       <button id="searchBtn" title="Search messages" onclick="toggleSearch()">🔍</button>
@@ -1572,6 +1572,39 @@ function streamEnd(data) {
   ps.el.appendChild(ts);
   delete pendingStreams[data.id];
   scrollBottom();
+}
+
+var PLUGIN_ICONS = {
+  "openclaw": "\u{1f916}",
+  "ollama": "\u{1f999}",
+  "openai-compatible": "\u{1f4a1}",
+  "n8n": "\u{26a1}",
+  "mcp": "\u{1f50c}"
+};
+
+function initPluginSelect(plugins) {
+  var sel = document.getElementById("pluginSelect");
+  sel.innerHTML = "";
+  if (!plugins || plugins.length === 0) {
+    sel.style.display = "none";
+    return;
+  }
+  for (var i = 0; i < plugins.length; i++) {
+    var p = plugins[i];
+    var opt = document.createElement("option");
+    opt.value = p.id;
+    var icon = PLUGIN_ICONS[p.type] || "\u{1f50c}";
+    opt.textContent = icon + " " + p.name;
+    if (p.active) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.style.display = "";
+  sel.onchange = function() {
+    var pluginId = sel.value;
+    window.ipc.postMessage(JSON.stringify({
+      type: "switchPlugin", pluginId: pluginId, sessionKey: "main"
+    }));
+  };
 }
 
 function clearChat() {
@@ -2528,6 +2561,7 @@ function init(data) {
     isPinned = true;
     document.getElementById("pinBtn").classList.add("active");
   }
+  if (data.plugins) initPluginSelect(data.plugins);
   if (data.currentPage && data.currentPage !== "chat") navigateTo(data.currentPage);
   // Init session tabs with whatever sessions we have
   var sessionsForTabs = data.sessions && data.sessions.length ? data.sessions : [{ key: "main", name: "main" }];

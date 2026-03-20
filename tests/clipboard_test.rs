@@ -7,8 +7,17 @@
 
 use openclaw_node_widget_rs::chat::{handle_ipc_message, ChatState};
 use openclaw_node_widget_rs::plugin::PluginCommand;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
+
+fn make_senders(
+    tx: mpsc::UnboundedSender<PluginCommand>,
+) -> HashMap<String, mpsc::UnboundedSender<PluginCommand>> {
+    let mut m = HashMap::new();
+    m.insert("default".to_string(), tx);
+    m
+}
 
 // ── Feature: Clipboard Image Paste ──────────────────────────────────
 
@@ -34,7 +43,7 @@ fn scenario_paste_image_creates_attachment() {
         }]
     })
     .to_string();
-    handle_ipc_message(&body, &tx, &state);
+    handle_ipc_message(&body, &make_senders(tx), &state);
 
     let cmd = rx.try_recv().expect("should receive a command");
     match cmd {
@@ -76,7 +85,7 @@ fn scenario_attachment_sent_with_message() {
         }]
     })
     .to_string();
-    handle_ipc_message(&body, &tx, &state);
+    handle_ipc_message(&body, &make_senders(tx), &state);
     let cmd = rx.try_recv().unwrap();
     match cmd {
         PluginCommand::SendChat {
@@ -109,7 +118,7 @@ fn scenario_text_only_no_attachment() {
         "message": "hello world"
     })
     .to_string();
-    handle_ipc_message(&body, &tx, &state);
+    handle_ipc_message(&body, &make_senders(tx), &state);
     let cmd = rx.try_recv().unwrap();
     match cmd {
         PluginCommand::SendChat {
@@ -142,7 +151,7 @@ fn scenario_empty_attachments_array_treated_as_no_attachment() {
         "attachments": []
     })
     .to_string();
-    handle_ipc_message(&body, &tx, &state);
+    handle_ipc_message(&body, &make_senders(tx), &state);
     // Empty attachments should not block the message
     let cmd = rx.try_recv().unwrap();
     match cmd {
@@ -183,7 +192,7 @@ fn scenario_image_only_message_sent() {
         }]
     })
     .to_string();
-    handle_ipc_message(&body, &tx, &state);
+    handle_ipc_message(&body, &make_senders(tx), &state);
     let cmd = rx.try_recv().unwrap();
     match cmd {
         PluginCommand::SendChat { attachments, .. } => {

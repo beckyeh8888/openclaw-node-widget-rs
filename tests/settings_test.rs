@@ -3,7 +3,16 @@
 use openclaw_node_widget_rs::chat::ChatState;
 use openclaw_node_widget_rs::config::{Config, GeneralSettings, PluginConfig};
 use openclaw_node_widget_rs::plugin::PluginCommand;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+
+fn make_senders(
+    tx: tokio::sync::mpsc::UnboundedSender<PluginCommand>,
+) -> HashMap<String, tokio::sync::mpsc::UnboundedSender<PluginCommand>> {
+    let mut m = HashMap::new();
+    m.insert("default".to_string(), tx);
+    m
+}
 
 // ── Feature: Plugin CRUD in Config ──────────────────────────────────
 
@@ -218,7 +227,7 @@ fn scenario_get_settings_ipc() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<PluginCommand>();
 
     let body = r#"{"type":"getSettings"}"#;
-    openclaw_node_widget_rs::chat::handle_ipc_message(body, &tx, &state);
+    openclaw_node_widget_rs::chat::handle_ipc_message(body, &make_senders(tx), &state);
 
     let s = state.lock().unwrap();
     assert!(s.settings_requested, "settings_requested should be set");
@@ -234,7 +243,7 @@ fn scenario_navigate_to_settings() {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel::<PluginCommand>();
 
     let body = r#"{"type":"navigate","page":"settings"}"#;
-    openclaw_node_widget_rs::chat::handle_ipc_message(body, &tx, &state);
+    openclaw_node_widget_rs::chat::handle_ipc_message(body, &make_senders(tx), &state);
 
     let s = state.lock().unwrap();
     assert_eq!(s.current_page, "settings");

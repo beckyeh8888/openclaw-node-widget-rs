@@ -635,12 +635,6 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
                 match message.map_err(|e| ConnectError::Retryable(format!("gateway read failed: {e}")))? {
                     Message::Text(text) => {
                         let frame = parse_frame(&text)?;
-                        // DEBUG: log all incoming frames to file for diagnosis
-                        if let Ok(ft) = serde_json::to_string(&frame.get("type")) {
-                            let evt = frame.get("event").and_then(Value::as_str).unwrap_or("-");
-                            let line = format!("[{}] type={} event={} len={}\n", chrono::Local::now().format("%H:%M:%S"), ft, evt, text.len());
-                            let _ = std::fs::OpenOptions::new().create(true).append(true).open("widget-ws-debug.log").map(|mut f| { use std::io::Write; let _ = f.write_all(line.as_bytes()); });
-                        }
                         handle_frame(&client.connection_name, &client.tx, &client.chat_state, &frame, pending_presence.as_deref(), &mut pending_chat_ids);
 
                         if frame_type(&frame) == Some("res") {
@@ -849,9 +843,14 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
+    // Better streaming detection: use `state` field from Gateway
+    // ("delta" / "running" means streaming in progress, "done" means finished).
+    let state = payload.get("state").and_then(Value::as_str).unwrap_or("");
     let streaming = msg_id.is_some()
         && (payload.get("streaming").and_then(Value::as_bool).unwrap_or(false)
             || payload.get("delta").is_some()
+            || state == "delta"
+            || state == "running"
             || !done);
 
     if let Ok(mut cs) = chat_state.lock() {
@@ -877,19 +876,45 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
                         msg_id: mid.clone(),
                         agent_name: agent_name.clone(),
                     });
+                    cs.pending_stream = Some(crate::chat::PendingStream {
+                        msg_id: mid.clone(),
+                        agent_name: agent_name.clone().unwrap_or_default(),
+                        text: String::new(),
+                    });
                 }
-                let delta = payload
+                // Gateway sends full accumulated text (not just the delta).
+                // Compute the actual delta by stripping the already-seen prefix.
+                let full_text = payload
                     .get("delta")
                     .and_then(Value::as_str)
                     .unwrap_or(&text);
-                cs.inbox.push(crate::chat::ChatInbound::StreamChunk {
-                    msg_id: mid.clone(),
-                    text: delta.to_string(),
-                });
+                let already_len = cs
+                    .pending_stream
+                    .as_ref()
+                    .filter(|ps| ps.msg_id == *mid)
+                    .map(|ps| ps.text.len())
+                    .unwrap_or(0);
+                let chunk = if full_text.len() > already_len {
+                    &full_text[already_len..]
+                } else {
+                    full_text
+                };
+                if !chunk.is_empty() {
+                    cs.inbox.push(crate::chat::ChatInbound::StreamChunk {
+                        msg_id: mid.clone(),
+                        text: chunk.to_string(),
+                    });
+                    // Update pending_stream text to track accumulated content
+                    if let Some(ref mut ps) = cs.pending_stream {
+                        if ps.msg_id == *mid {
+                            ps.text = full_text.to_string();
+                        }
+                    }
+                }
                 return;
             }
 
-            // done == true with a msg_id: send final chunk if there's delta, then end
+            // done == true with a msg_id: send final chunk if needed, then end
             if done {
                 let has_pending = cs
                     .pending_stream
@@ -897,13 +922,27 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
                     .map(|ps| ps.msg_id == *mid)
                     .unwrap_or(false);
                 if has_pending {
-                    if let Some(delta) = payload.get("delta").and_then(Value::as_str) {
-                        if !delta.is_empty() {
-                            cs.inbox.push(crate::chat::ChatInbound::StreamChunk {
-                                msg_id: mid.clone(),
-                                text: delta.to_string(),
-                            });
-                        }
+                    // Compute remaining delta from accumulated text
+                    let already_len = cs
+                        .pending_stream
+                        .as_ref()
+                        .filter(|ps| ps.msg_id == *mid)
+                        .map(|ps| ps.text.len())
+                        .unwrap_or(0);
+                    let final_text = payload
+                        .get("delta")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&text);
+                    let remaining = if final_text.len() > already_len {
+                        &final_text[already_len..]
+                    } else {
+                        ""
+                    };
+                    if !remaining.is_empty() {
+                        cs.inbox.push(crate::chat::ChatInbound::StreamChunk {
+                            msg_id: mid.clone(),
+                            text: remaining.to_string(),
+                        });
                     }
                     cs.inbox.push(crate::chat::ChatInbound::StreamEnd {
                         msg_id: mid.clone(),
@@ -1130,7 +1169,7 @@ mod tests {
     }
 
     #[test]
-    fn given_active_session_main_when_chat_event_has_different_session_then_message_dropped() {
+    fn given_active_session_main_when_chat_event_has_isolated_session_then_message_dropped() {
         let cs = make_chat_state();
         {
             let mut s = cs.lock().unwrap();
@@ -1138,14 +1177,14 @@ mod tests {
         }
 
         let payload = json!({
-            "text": "cron result",
-            "sessionKey": "cron-abc",
-            "agentName": "CronBot"
+            "text": "sub-agent result",
+            "sessionKey": "isolated-task-42",
+            "agentName": "SubBot"
         });
         handle_chat_event(&cs, Some(&payload));
 
         let s = cs.lock().unwrap();
-        assert!(s.inbox.is_empty(), "mismatched session message should be dropped");
+        assert!(s.inbox.is_empty(), "isolated session message should be dropped");
     }
 
     #[test]
@@ -1198,6 +1237,106 @@ mod tests {
         assert!(!is_filtered_sender("Bot"));
         assert!(!is_filtered_sender(""));
         assert!(!is_filtered_sender("my-agent"));
+    }
+
+    // ── Streaming dedup tests ──────────────────────────────────────
+
+    #[test]
+    fn given_streaming_chat_events_with_same_msgid_then_single_bubble_shown() {
+        let cs = make_chat_state();
+
+        // First delta event
+        let p1 = json!({
+            "text": "Hello",
+            "msgId": "msg-1",
+            "state": "delta",
+            "done": false,
+            "agentName": "Bot"
+        });
+        handle_chat_event(&cs, Some(&p1));
+
+        // Second delta event with accumulated text
+        let p2 = json!({
+            "text": "Hello world",
+            "msgId": "msg-1",
+            "state": "delta",
+            "done": false,
+            "agentName": "Bot"
+        });
+        handle_chat_event(&cs, Some(&p2));
+
+        let s = cs.lock().unwrap();
+        // Should have: StreamStart + StreamChunk("Hello") + StreamChunk(" world")
+        assert_eq!(s.inbox.len(), 3, "should have StreamStart + 2 StreamChunks");
+        assert!(matches!(&s.inbox[0], crate::chat::ChatInbound::StreamStart { .. }));
+        assert!(matches!(&s.inbox[1], crate::chat::ChatInbound::StreamChunk { .. }));
+        assert!(matches!(&s.inbox[2], crate::chat::ChatInbound::StreamChunk { .. }));
+
+        // Verify first chunk has "Hello" and second has " world" (delta)
+        if let crate::chat::ChatInbound::StreamChunk { text, .. } = &s.inbox[1] {
+            assert_eq!(text, "Hello");
+        }
+        if let crate::chat::ChatInbound::StreamChunk { text, .. } = &s.inbox[2] {
+            assert_eq!(text, " world");
+        }
+    }
+
+    #[test]
+    fn given_streaming_done_event_then_bubble_finalized() {
+        let cs = make_chat_state();
+
+        // First: delta event to start the stream
+        let p1 = json!({
+            "text": "Hello",
+            "msgId": "msg-2",
+            "state": "delta",
+            "done": false,
+            "agentName": "Bot"
+        });
+        handle_chat_event(&cs, Some(&p1));
+
+        // Process StreamStart into pending_stream so done event can find it
+        {
+            let mut s = cs.lock().unwrap();
+            // Simulate what process_inbox_to_webview does: set pending_stream
+            s.pending_stream = Some(crate::chat::PendingStream {
+                msg_id: "msg-2".to_string(),
+                agent_name: "Bot".to_string(),
+                text: "Hello".to_string(),
+            });
+            s.inbox.clear();
+        }
+
+        // Done event with final text
+        let p2 = json!({
+            "text": "Hello world",
+            "msgId": "msg-2",
+            "state": "done",
+            "done": true,
+            "agentName": "Bot"
+        });
+        handle_chat_event(&cs, Some(&p2));
+
+        let s = cs.lock().unwrap();
+        // Should have: StreamChunk(" world") + StreamEnd
+        let has_end = s.inbox.iter().any(|e| matches!(e, crate::chat::ChatInbound::StreamEnd { .. }));
+        assert!(has_end, "done event should produce StreamEnd");
+    }
+
+    #[test]
+    fn given_non_streaming_chat_event_then_single_bubble_shown() {
+        let cs = make_chat_state();
+
+        let payload = json!({
+            "text": "One-shot reply",
+            "agentName": "Bot",
+            "done": true
+        });
+        handle_chat_event(&cs, Some(&payload));
+
+        let s = cs.lock().unwrap();
+        assert_eq!(s.inbox.len(), 1, "non-streaming should produce one Reply");
+        assert!(matches!(&s.inbox[0], crate::chat::ChatInbound::Reply { .. }));
     }
 }
 

@@ -132,6 +132,18 @@ impl PluginRegistry {
         self.active().and_then(|p| p.command_sender())
     }
 
+    /// Collect command senders from all plugins that have one.
+    pub fn command_senders(&self) -> HashMap<String, mpsc::UnboundedSender<PluginCommand>> {
+        self.order
+            .iter()
+            .filter_map(|k| {
+                self.plugins
+                    .get(k)
+                    .and_then(|p| p.command_sender().map(|tx| (k.clone(), tx)))
+            })
+            .collect()
+    }
+
     /// Send a message through the active plugin.
     pub fn send_message(
         &self,
