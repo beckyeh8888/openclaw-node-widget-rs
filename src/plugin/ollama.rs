@@ -284,10 +284,7 @@ impl AgentPlugin for OllamaPlugin {
                                                                         &event_tx
                                                                     {
                                                                         let _ = tx.send(
-                                                                        PluginEvent::StreamChunk {
-                                                                            plugin_id: plugin_id.clone(),
-                                                                            text: msg.content.clone(),
-                                                                        },
+                                                                        PluginEvent::StreamChunk { plugin_id: plugin_id.clone(), msg_id: String::new(), text: msg.content.clone() },
                                                                     );
                                                                     }
                                                                 }

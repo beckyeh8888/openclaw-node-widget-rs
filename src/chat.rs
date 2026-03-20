@@ -29,11 +29,29 @@ pub enum ChatInbound {
         text: String,
         agent_name: Option<String>,
     },
+    StreamStart {
+        msg_id: String,
+        agent_name: Option<String>,
+    },
+    StreamChunk {
+        msg_id: String,
+        text: String,
+    },
+    StreamEnd {
+        msg_id: String,
+    },
     SessionsList {
         sessions: Vec<ChatSessionInfo>,
     },
     Connected,
     Disconnected,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingStream {
+    pub msg_id: String,
+    pub agent_name: String,
+    pub text: String,
 }
 
 #[derive(Debug)]
@@ -46,6 +64,7 @@ pub struct ChatState {
     pub window_open: bool,
     pub window_focused: bool,
     pub waiting_for_reply: bool,
+    pub pending_stream: Option<PendingStream>,
     pub dashboard_data: DashboardData,
     pub log_buffer: LogBuffer,
     pub current_page: String,
@@ -62,6 +81,7 @@ impl ChatState {
             window_open: false,
             window_focused: true,
             waiting_for_reply: false,
+            pending_stream: None,
             dashboard_data: DashboardData::new(),
             log_buffer: LogBuffer::new(),
             current_page: "chat".to_string(),
@@ -406,6 +426,51 @@ fn process_inbox_to_webview(
                 let _ = webview.evaluate_script(&format!(
                     "setSessions({})",
                     json!(sessions_json)
+                ));
+            }
+            ChatInbound::StreamStart { msg_id, agent_name } => {
+                let name = agent_name.unwrap_or_else(|| "Agent".to_string());
+                state.pending_stream = Some(PendingStream {
+                    msg_id: msg_id.clone(),
+                    agent_name: name.clone(),
+                    text: String::new(),
+                });
+                state.waiting_for_reply = false;
+                let data = json!({ "id": msg_id, "agentName": name });
+                let _ = webview.evaluate_script(&format!(
+                    "if(typeof streamStart==='function')streamStart({})",
+                    data
+                ));
+                let _ = webview.evaluate_script("setTyping(false)");
+            }
+            ChatInbound::StreamChunk { msg_id, text } => {
+                if let Some(ref mut ps) = state.pending_stream {
+                    if ps.msg_id == msg_id {
+                        ps.text.push_str(&text);
+                    }
+                }
+                let data = json!({ "id": msg_id, "text": text });
+                let _ = webview.evaluate_script(&format!(
+                    "if(typeof streamChunk==='function')streamChunk({})",
+                    data
+                ));
+            }
+            ChatInbound::StreamEnd { msg_id } => {
+                if let Some(ps) = state.pending_stream.take() {
+                    if ps.msg_id == msg_id {
+                        state.messages.push(ChatMessage {
+                            sender: ChatSender::Agent(ps.agent_name),
+                            text: ps.text,
+                        });
+                        while state.messages.len() > MAX_MESSAGES {
+                            state.messages.remove(0);
+                        }
+                    }
+                }
+                let data = json!({ "id": msg_id });
+                let _ = webview.evaluate_script(&format!(
+                    "if(typeof streamEnd==='function')streamEnd({})",
+                    data
                 ));
             }
             ChatInbound::Connected => {
@@ -875,5 +940,159 @@ mod tests {
         assert_eq!(v["messages"][1]["agentName"], "Bot");
         assert_eq!(v["sessions"][0]["key"], "main");
         assert_eq!(v["selectedSession"], "main");
+    }
+
+    // ── Streaming: stream start creates pending message ─────────
+
+    #[test]
+    fn given_no_messages_when_stream_start_processed_then_pending_stream_exists() {
+        let mut state = ChatState::new();
+        state.inbox.push(ChatInbound::StreamStart {
+            msg_id: "abc".to_string(),
+            agent_name: Some("Bot".to_string()),
+        });
+
+        let events: Vec<_> = state.inbox.drain(..).collect();
+        for event in events {
+            if let ChatInbound::StreamStart { msg_id, agent_name } = event {
+                let name = agent_name.unwrap_or_else(|| "Agent".to_string());
+                state.pending_stream = Some(PendingStream {
+                    msg_id,
+                    agent_name: name,
+                    text: String::new(),
+                });
+                state.waiting_for_reply = false;
+            }
+        }
+
+        assert!(state.pending_stream.is_some(), "pending stream should exist");
+        let ps = state.pending_stream.as_ref().unwrap();
+        assert_eq!(ps.msg_id, "abc");
+        assert_eq!(ps.agent_name, "Bot");
+        assert!(ps.text.is_empty());
+    }
+
+    // ── Streaming: chunks append text ───────────────────────────
+
+    #[test]
+    fn given_pending_stream_when_chunk_arrives_then_text_appended() {
+        let mut state = ChatState::new();
+        state.pending_stream = Some(PendingStream {
+            msg_id: "abc".to_string(),
+            agent_name: "Bot".to_string(),
+            text: "Hello".to_string(),
+        });
+
+        state.inbox.push(ChatInbound::StreamChunk {
+            msg_id: "abc".to_string(),
+            text: " world".to_string(),
+        });
+
+        let events: Vec<_> = state.inbox.drain(..).collect();
+        for event in events {
+            if let ChatInbound::StreamChunk { msg_id, text } = event {
+                if let Some(ref mut ps) = state.pending_stream {
+                    if ps.msg_id == msg_id {
+                        ps.text.push_str(&text);
+                    }
+                }
+            }
+        }
+
+        let ps = state.pending_stream.as_ref().unwrap();
+        assert_eq!(ps.text, "Hello world");
+    }
+
+    // ── Streaming: stream end finalizes message ─────────────────
+
+    #[test]
+    fn given_pending_stream_when_stream_end_then_message_finalized() {
+        let mut state = ChatState::new();
+        state.pending_stream = Some(PendingStream {
+            msg_id: "abc".to_string(),
+            agent_name: "Bot".to_string(),
+            text: "Hello world".to_string(),
+        });
+
+        state.inbox.push(ChatInbound::StreamEnd {
+            msg_id: "abc".to_string(),
+        });
+
+        let events: Vec<_> = state.inbox.drain(..).collect();
+        for event in events {
+            if let ChatInbound::StreamEnd { msg_id } = event {
+                if let Some(ps) = state.pending_stream.take() {
+                    if ps.msg_id == msg_id {
+                        state.messages.push(ChatMessage {
+                            sender: ChatSender::Agent(ps.agent_name),
+                            text: ps.text,
+                        });
+                    }
+                }
+            }
+        }
+
+        assert!(state.pending_stream.is_none(), "pending stream should be cleared");
+        assert_eq!(state.messages.len(), 1);
+        assert_eq!(state.messages[0].text, "Hello world");
+        assert_eq!(
+            state.messages[0].sender,
+            ChatSender::Agent("Bot".to_string())
+        );
+    }
+
+    // ── Streaming: chunk with mismatched id does not modify ─────
+
+    #[test]
+    fn given_pending_stream_when_chunk_with_wrong_id_then_text_unchanged() {
+        let mut state = ChatState::new();
+        state.pending_stream = Some(PendingStream {
+            msg_id: "abc".to_string(),
+            agent_name: "Bot".to_string(),
+            text: "Hello".to_string(),
+        });
+
+        state.inbox.push(ChatInbound::StreamChunk {
+            msg_id: "xyz".to_string(),
+            text: " nope".to_string(),
+        });
+
+        let events: Vec<_> = state.inbox.drain(..).collect();
+        for event in events {
+            if let ChatInbound::StreamChunk { msg_id, text } = event {
+                if let Some(ref mut ps) = state.pending_stream {
+                    if ps.msg_id == msg_id {
+                        ps.text.push_str(&text);
+                    }
+                }
+            }
+        }
+
+        assert_eq!(state.pending_stream.as_ref().unwrap().text, "Hello");
+    }
+
+    // ── Streaming: default agent name ───────────────────────────
+
+    #[test]
+    fn given_stream_start_without_agent_name_then_defaults_to_agent() {
+        let mut state = ChatState::new();
+        state.inbox.push(ChatInbound::StreamStart {
+            msg_id: "s1".to_string(),
+            agent_name: None,
+        });
+
+        let events: Vec<_> = state.inbox.drain(..).collect();
+        for event in events {
+            if let ChatInbound::StreamStart { msg_id, agent_name } = event {
+                let name = agent_name.unwrap_or_else(|| "Agent".to_string());
+                state.pending_stream = Some(PendingStream {
+                    msg_id,
+                    agent_name: name,
+                    text: String::new(),
+                });
+            }
+        }
+
+        assert_eq!(state.pending_stream.as_ref().unwrap().agent_name, "Agent");
     }
 }

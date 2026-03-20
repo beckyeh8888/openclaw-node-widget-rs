@@ -753,7 +753,73 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
         .and_then(Value::as_str)
         .map(String::from);
 
+    let msg_id = payload
+        .get("msgId")
+        .or_else(|| payload.get("id"))
+        .and_then(Value::as_str)
+        .map(String::from);
+
+    let done = payload
+        .get("done")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let streaming = msg_id.is_some()
+        && (payload.get("streaming").and_then(Value::as_bool).unwrap_or(false)
+            || payload.get("delta").is_some()
+            || !done);
+
     if let Ok(mut cs) = chat_state.lock() {
+        if let Some(ref mid) = msg_id {
+            if streaming && !done {
+                // Check if this is the first chunk (no pending stream or different id)
+                let is_new = cs
+                    .pending_stream
+                    .as_ref()
+                    .map(|ps| ps.msg_id != *mid)
+                    .unwrap_or(true);
+                if is_new {
+                    cs.inbox.push(crate::chat::ChatInbound::StreamStart {
+                        msg_id: mid.clone(),
+                        agent_name: agent_name.clone(),
+                    });
+                }
+                let delta = payload
+                    .get("delta")
+                    .and_then(Value::as_str)
+                    .unwrap_or(text);
+                cs.inbox.push(crate::chat::ChatInbound::StreamChunk {
+                    msg_id: mid.clone(),
+                    text: delta.to_string(),
+                });
+                return;
+            }
+
+            // done == true with a msg_id: send final chunk if there's delta, then end
+            if done {
+                let has_pending = cs
+                    .pending_stream
+                    .as_ref()
+                    .map(|ps| ps.msg_id == *mid)
+                    .unwrap_or(false);
+                if has_pending {
+                    if let Some(delta) = payload.get("delta").and_then(Value::as_str) {
+                        if !delta.is_empty() {
+                            cs.inbox.push(crate::chat::ChatInbound::StreamChunk {
+                                msg_id: mid.clone(),
+                                text: delta.to_string(),
+                            });
+                        }
+                    }
+                    cs.inbox.push(crate::chat::ChatInbound::StreamEnd {
+                        msg_id: mid.clone(),
+                    });
+                    return;
+                }
+            }
+        }
+
+        // Non-streaming: complete reply
         cs.inbox.push(crate::chat::ChatInbound::Reply {
             text: text.to_string(),
             agent_name,
