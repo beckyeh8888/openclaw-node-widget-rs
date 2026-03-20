@@ -190,10 +190,10 @@ impl eframe::App for SettingsApp {
                     ui.horizontal(|ui| {
                         ui.label(t("connection_name"));
                         ui.text_edit_singleline(&mut self.connections[i].name);
-                        if conn_count > 1 {
-                            if ui.button(t("remove")).clicked() {
-                                remove_idx = Some(i);
-                            }
+                        if conn_count > 1
+                            && ui.button(t("remove")).clicked()
+                        {
+                            remove_idx = Some(i);
                         }
                     });
                     egui::Grid::new(format!("conn_grid_{i}"))

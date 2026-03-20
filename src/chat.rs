@@ -84,6 +84,12 @@ pub struct ChatState {
     pub active_session_key: String,
 }
 
+impl Default for ChatState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChatState {
     pub fn new() -> Self {
         Self {

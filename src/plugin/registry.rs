@@ -15,6 +15,12 @@ pub struct PluginRegistry {
     active_plugin: Option<String>,
 }
 
+impl Default for PluginRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PluginRegistry {
     pub fn new() -> Self {
         Self {

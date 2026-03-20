@@ -3,7 +3,7 @@
 //! Tests cover: DefaultsConfig, detect_nodejs, wizard step flow,
 //! connection test logic, pairing status, and new i18n keys.
 
-use openclaw_node_widget_rs::config::{Config, DefaultsConfig};
+use openclaw_node_widget_rs::config::Config;
 use openclaw_node_widget_rs::i18n;
 
 // ── Feature: Pre-configured Installer Defaults ──────────────────────

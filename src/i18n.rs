@@ -92,6 +92,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 static LANG: OnceLock<Lang> = OnceLock::new();
 static OVERRIDE: AtomicU8 = AtomicU8::new(0); // 0=none, 1=En, 2=ZhTw, 3=ZhCn
 
+#[allow(dead_code)]
 pub fn init() {
     LANG.get_or_init(detect_lang);
 }
@@ -154,7 +155,7 @@ pub fn t(key: &str) -> &str {
     result.unwrap_or_else(|| en(key))
 }
 
-fn en<'a>(key: &'a str) -> &'a str {
+fn en(key: &str) -> &str {
     match key {
         // Tray menu
         "status_unknown" => "Unknown",

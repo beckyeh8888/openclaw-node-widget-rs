@@ -1,9 +1,9 @@
+#![allow(dead_code)]
 /// Minimal Markdown-to-HTML renderer (no external dependencies).
 ///
 /// Handles: bold, italic, inline code, code blocks, links,
 /// unordered/ordered lists, headings (rendered as bold), paragraphs.
 /// All input is HTML-escaped first to prevent XSS.
-
 pub fn escape_html(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -193,11 +193,7 @@ fn render_lists(text: &str) -> String {
                 result.push_str("<ul>");
                 in_ul = true;
             }
-            let content = if trimmed.starts_with("- ") {
-                &trimmed[2..]
-            } else {
-                &trimmed[2..]
-            };
+            let content = trimmed.strip_prefix("- ").unwrap_or(&trimmed[2..]);
             result.push_str(&format!("<li>{content}</li>"));
         } else if is_ol {
             if !in_ol {
@@ -208,7 +204,7 @@ fn render_lists(text: &str) -> String {
                 result.push_str("<ol>");
                 in_ol = true;
             }
-            let content = trimmed.splitn(2, ". ").nth(1).unwrap_or("");
+            let content = trimmed.split_once(". ").map(|x| x.1).unwrap_or("");
             result.push_str(&format!("<li>{content}</li>"));
         } else {
             if in_ul {

@@ -701,13 +701,10 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                     tray.show_download_update(&tag);
                 }
                 TrayCommand::Uninstall => {
-                    match uninstall::confirm_uninstall() {
-                        Ok(true) => {
-                            let _ = uninstall::perform_uninstall();
-                            tray::send_notification_public(i18n::t("notif_uninstalled"));
-                            return Ok(());
-                        }
-                        _ => {}
+                    if let Ok(true) = uninstall::confirm_uninstall() {
+                        let _ = uninstall::perform_uninstall();
+                        tray::send_notification_public(i18n::t("notif_uninstalled"));
+                        return Ok(());
                     }
                 }
                 TrayCommand::Exit => return Ok(()),

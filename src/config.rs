@@ -5,7 +5,7 @@ use tracing::info;
 
 use crate::error::{AppError, Result};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub gateway: GatewayConfig,
@@ -57,7 +57,7 @@ pub struct DefaultsConfig {
     pub gateway_token: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GatewayConfig {
     pub url: Option<String>,
@@ -151,7 +151,7 @@ pub struct WidgetConfig {
     pub always_on_top: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StartupConfig {
     pub auto_start: bool,
@@ -212,33 +212,9 @@ fn default_theme() -> String {
     "auto".to_string()
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            gateway: GatewayConfig::default(),
-            node: NodeConfig::default(),
-            widget: WidgetConfig::default(),
-            startup: StartupConfig::default(),
-            appearance: AppearanceConfig::default(),
-            log: LogConfig::default(),
-            connections: Vec::new(),
-            plugins: Vec::new(),
-            voice: VoiceConfig::default(),
-            tts: TtsConfig::default(),
-            update: UpdateConfig::default(),
-            defaults: DefaultsConfig::default(),
-        }
-    }
-}
+// Default is derived via #[derive(Default)] on the struct.
 
-impl Default for GatewayConfig {
-    fn default() -> Self {
-        Self {
-            url: None,
-            token: None,
-        }
-    }
-}
+// Default is derived via #[derive(Default)] on the struct.
 
 impl Default for NodeConfig {
     fn default() -> Self {
@@ -269,16 +245,7 @@ impl Default for WidgetConfig {
     }
 }
 
-impl Default for StartupConfig {
-    fn default() -> Self {
-        Self {
-            auto_start: false,
-            xdg_desktop_path: String::new(),
-            launchd_plist_path: String::new(),
-            registry_key: String::new(),
-        }
-    }
-}
+// Default is derived via #[derive(Default)] on the struct.
 
 impl Default for AppearanceConfig {
     fn default() -> Self {

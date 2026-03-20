@@ -384,7 +384,7 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
         signed_at_ms,
         token: &token,
         nonce,
-        platform: &platform,
+        platform,
         device_family: "desktop",
     });
     let signature = sign_payload(&client.private_key, &payload);
@@ -426,7 +426,7 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
     let masked_json = connect_json.replace(&token, &mask_token(&token));
     debug!(connect_frame = %masked_json, "connect frame payload");
     write
-        .send(Message::Text(connect_json.into()))
+        .send(Message::Text(connect_json))
         .await
         .map_err(|e| ConnectError::Retryable(format!("connect request send failed: {e}")))?;
     info!("connect frame sent, waiting for response...");
@@ -545,7 +545,7 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
     });
     info!("sending events.subscribe request (best-effort)");
     if let Err(e) = write
-        .send(Message::Text(subscribe_frame.to_string().into()))
+        .send(Message::Text(subscribe_frame.to_string()))
         .await
     {
         info!("events.subscribe send failed (non-fatal): {e}");
@@ -561,7 +561,7 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
         tokio::select! {
             _ = ping_ticker.tick() => {
                 let payload = b"ocw-ping".to_vec();
-                if write.send(Message::Ping(payload.into())).await.is_ok() {
+                if write.send(Message::Ping(payload)).await.is_ok() {
                     ping_sent_at = Some(std::time::Instant::now());
                 }
             }
@@ -575,7 +575,7 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
                     "params": {}
                 });
                 write
-                    .send(Message::Text(frame.to_string().into()))
+                    .send(Message::Text(frame.to_string()))
                     .await
                     .map_err(|e| ConnectError::Retryable(format!("presence request send failed: {e}")))?;
                 pending_presence = Some(req_id);
@@ -607,7 +607,7 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
                         });
                         info!(req_id = %req_id, "sending chat.send");
                         pending_chat_ids.insert(req_id);
-                        if let Err(e) = write.send(Message::Text(frame.to_string().into())).await {
+                        if let Err(e) = write.send(Message::Text(frame.to_string())).await {
                             warn!("chat.send failed: {e}");
                         }
                     }
@@ -621,7 +621,7 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
                         });
                         info!(req_id = %req_id, "sending sessions.list");
                         pending_chat_ids.insert(req_id);
-                        if let Err(e) = write.send(Message::Text(frame.to_string().into())).await {
+                        if let Err(e) = write.send(Message::Text(frame.to_string())).await {
                             warn!("sessions.list failed: {e}");
                         }
                     }

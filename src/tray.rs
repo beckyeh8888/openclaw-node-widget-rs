@@ -418,7 +418,7 @@ impl TrayState {
         }
         for name in &self.connection_order {
             if let Some(cs) = self.connections.get(name) {
-                cs.menu_item.set_text(&format!("{}: {}", name, cs.status_label));
+                cs.menu_item.set_text(format!("{}: {}", name, cs.status_label));
             }
         }
     }
@@ -441,7 +441,7 @@ impl TrayState {
             }
             None => t("na").to_string(),
         };
-        self.conn_detail_item.set_text(&format!("GW:{gw} | {node} | {uptime}"));
+        self.conn_detail_item.set_text(format!("GW:{gw} | {node} | {uptime}"));
     }
 
     fn update_diagnostics_items(&mut self) {
@@ -452,7 +452,7 @@ impl TrayState {
             .next();
         let error_text = last_error.unwrap_or(t("none"));
         self.last_error_item
-            .set_text(&format!("{}{}", t("last_error_label"), error_text));
+            .set_text(format!("{}{}", t("last_error_label"), error_text));
 
         // Show most recent connected time
         let last_connected = self.connection_order.iter()
@@ -464,7 +464,7 @@ impl TrayState {
             None => t("na").to_string(),
         };
         self.last_connected_item
-            .set_text(&format!("{}{}", t("last_connected_label"), connected_text));
+            .set_text(format!("{}{}", t("last_connected_label"), connected_text));
     }
 
     fn update_stats_items(&mut self) {
@@ -477,12 +477,12 @@ impl TrayState {
             .next();
 
         self.stats_sessions_item
-            .set_text(&format!("{}{}", t("stats_sessions"), total_sessions));
+            .set_text(format!("{}{}", t("stats_sessions"), total_sessions));
         self.stats_errors_item
-            .set_text(&format!("{}{}", t("stats_errors_24h"), total_errors));
+            .set_text(format!("{}{}", t("stats_errors_24h"), total_errors));
         let activity = last_activity.unwrap_or(t("na"));
         self.stats_activity_item
-            .set_text(&format!("{}{}", t("stats_last_activity"), activity));
+            .set_text(format!("{}{}", t("stats_last_activity"), activity));
     }
 
     pub fn collect_diagnostics(&self, connections: &[crate::config::ConnectionConfig]) -> String {
@@ -620,7 +620,7 @@ impl TrayState {
     pub fn show_download_update(&mut self, tag: &str) {
         self.pending_update_tag = Some(tag.to_string());
         self.download_update_item
-            .set_text(&format!("⬇ Download {tag}"));
+            .set_text(format!("⬇ Download {tag}"));
         self.download_update_item.set_enabled(true);
     }
 

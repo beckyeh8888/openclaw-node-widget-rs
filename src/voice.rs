@@ -143,6 +143,7 @@ async fn try_openai_whisper(
 }
 
 /// Validate base64 audio data without transcribing.
+#[allow(dead_code)]
 pub fn validate_audio_data(audio_base64: &str) -> Result<usize, String> {
     if audio_base64.is_empty() {
         return Err("empty audio data".to_string());

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -322,7 +323,7 @@ pub async fn download_and_install(tag: &str) -> Result<(), String> {
         );
         debug!("opening release page: {url}");
         let _ = open::that(&url);
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(windows)]

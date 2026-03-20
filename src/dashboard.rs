@@ -43,6 +43,12 @@ pub struct DashboardData {
     pub latency_history: Vec<u64>,
 }
 
+impl Default for DashboardData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DashboardData {
     pub fn new() -> Self {
         Self {
@@ -89,6 +95,12 @@ pub struct LogBuffer {
     entries: VecDeque<LogEntry>,
     max_size: usize,
     next_id: u64,
+}
+
+impl Default for LogBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LogBuffer {
@@ -166,6 +178,12 @@ pub struct LatencyTracker {
     max_samples: usize,
 }
 
+impl Default for LatencyTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LatencyTracker {
     pub fn new() -> Self {
         Self {
@@ -213,6 +231,12 @@ pub struct HealthTracker {
     history: std::collections::HashMap<String, VecDeque<(bool, std::time::Instant)>>,
     /// Most recent health result per plugin.
     latest: std::collections::HashMap<String, crate::plugin::HealthStatus>,
+}
+
+impl Default for HealthTracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HealthTracker {

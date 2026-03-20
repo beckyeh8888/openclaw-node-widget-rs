@@ -22,18 +22,12 @@ pub struct PersistedMessage {
 }
 
 /// Root structure written to disk.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChatHistoryFile {
     pub conversations: HashMap<ConversationKey, Vec<PersistedMessage>>,
 }
 
-impl Default for ChatHistoryFile {
-    fn default() -> Self {
-        Self {
-            conversations: HashMap::new(),
-        }
-    }
-}
+// Default is derived via #[derive(Default)] on the struct.
 
 /// In-memory chat history manager with disk persistence.
 pub struct ChatHistory {
