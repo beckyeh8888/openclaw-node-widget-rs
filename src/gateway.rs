@@ -786,21 +786,12 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
             || !done);
 
     if let Ok(mut cs) = chat_state.lock() {
-        // Session filter: drop events that clearly belong to a different session.
-        // Gateway chat events may use full session keys like "telegram:g-agent-main-telegram-direct-XXX"
-        // while Widget tracks shorter keys like "main". Use substring matching.
+        // Session filter: drop events from sub-agent / isolated sessions only.
+        // TODO: Refine filtering once Gateway sessionKey format is confirmed.
         if let Some(evt_key) = event_session {
-            let active = &cs.active_session_key;
-            // Drop sub-agent / isolated sessions
             let is_sub = evt_key.contains("isolated") || evt_key.starts_with("run:");
-            // Match: either exact, or one contains the other, or both contain "main"
-            let is_match = evt_key == *active
-                || evt_key.contains(active.as_str())
-                || active.contains(evt_key);
-            if is_sub || !is_match {
-                tracing::debug!(
-                    "ignoring chat event for session {evt_key} (active: {active})"
-                );
+            if is_sub {
+                tracing::debug!("ignoring chat event from sub-agent session {evt_key}");
                 return;
             }
         }
