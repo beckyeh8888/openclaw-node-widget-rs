@@ -893,6 +893,18 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
     if let Ok(mut cs) = chat_state.lock() {
         // Session filter: drop events from sub-agent / isolated sessions,
         // and events not matching the active agent's session key.
+        // DEBUG: log ALL chat events before filtering
+        {
+            let sk = event_session.as_deref().unwrap_or("none");
+            let st = payload.get("state").and_then(Value::as_str).unwrap_or("-");
+            let active = cs.active_session_key.clone();
+            let line = format!("[{}] ALL evt_key={} active={} state={}\n",
+                chrono::Local::now().format("%H:%M:%S"), sk, active, st);
+            let _ = std::fs::OpenOptions::new().create(true).append(true)
+                .open("widget-all-events.log")
+                .and_then(|mut f| { use std::io::Write; f.write_all(line.as_bytes()) });
+        }
+
         if let Some(evt_key) = event_session {
             let is_sub = evt_key.contains("isolated") || evt_key.starts_with("run:") || evt_key.contains(":cron:");
             if is_sub {
