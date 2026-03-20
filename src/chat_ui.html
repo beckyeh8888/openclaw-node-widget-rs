@@ -1004,6 +1004,75 @@ mark.search-highlight.current {
   transition: color 0.15s;
 }
 #searchBtn:hover { color: var(--text-primary); }
+
+/* ── Plugin Store page ──────────────────────────────── */
+.store-header {
+  background: var(--bg-secondary);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 15px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.store-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+.store-scroll::-webkit-scrollbar { width: 5px; }
+.store-scroll::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+.store-search {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  padding: 8px 14px;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  margin-bottom: 14px;
+  box-sizing: border-box;
+}
+.store-search::placeholder { color: var(--text-dimmed); }
+.store-search:focus { border-color: var(--accent); }
+.store-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.store-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.15s;
+}
+.store-card:hover { border-color: var(--accent); }
+.store-card-icon { font-size: 28px; line-height: 1; }
+.store-card-name { font-size: 14px; font-weight: 600; }
+.store-card-desc { font-size: 12px; color: var(--text-muted); line-height: 1.3; flex: 1; }
+.store-card-actions { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.store-add-btn {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.store-add-btn:hover { background: var(--accent-hover); }
+.store-installed-badge {
+  font-size: 11px;
+  color: #44ff44;
+  background: rgba(68,255,68,0.1);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
 </style>
 </head>
 <body>
@@ -1015,6 +1084,7 @@ mark.search-highlight.current {
   <button class="nav-btn active" data-page="chat" title="Chat">💬</button>
   <button class="nav-btn" data-page="dashboard" title="Dashboard">📊</button>
   <button class="nav-btn" data-page="logs" title="Logs">📋</button>
+  <button class="nav-btn" data-page="store" title="Plugin Store">🏪</button>
   <button class="nav-btn" data-page="settings" title="Settings" style="margin-top:auto;">⚙️</button>
 </div>
 
@@ -1135,6 +1205,15 @@ mark.search-highlight.current {
     <div class="settings-footer">
       <button class="settings-footer-btn secondary" id="settingsResetBtn">Reset</button>
       <button class="settings-footer-btn" id="settingsSaveAllBtn">Save All</button>
+    </div>
+  </div>
+
+  <!-- ── Plugin Store Page ─────────────────────────────── -->
+  <div id="page-store" class="page">
+    <div class="store-header">🏪 Plugin Store</div>
+    <div class="store-scroll">
+      <input type="text" id="storeSearch" class="store-search" placeholder="Search plugins...">
+      <div id="storeGrid" class="store-grid"></div>
     </div>
   </div>
 
@@ -2576,6 +2655,139 @@ document.addEventListener('paste', function(e) {
     }
   }
 });
+
+// ── Plugin Store ─────────────────────────────────────────
+var pluginPresets = [
+    {
+        id: 'ollama-llama3',
+        name: 'Ollama (Llama 3.3)',
+        icon: '\uD83E\uDD99',
+        desc: 'Local AI with Meta Llama 3.3 \u2014 fast, private, free',
+        config: { type: 'ollama', url: 'http://localhost:11434', model: 'llama3.3' }
+    },
+    {
+        id: 'ollama-codellama',
+        name: 'Ollama (CodeLlama)',
+        icon: '\uD83D\uDCBB',
+        desc: 'Code generation and review with CodeLlama',
+        config: { type: 'ollama', url: 'http://localhost:11434', model: 'codellama' }
+    },
+    {
+        id: 'openai-gpt4o',
+        name: 'OpenAI GPT-4o',
+        icon: '\uD83E\uDDE0',
+        desc: 'OpenAI\'s flagship model \u2014 requires API key',
+        config: { type: 'openai-compatible', url: 'https://api.openai.com/v1', model: 'gpt-4o', api_key: '' }
+    },
+    {
+        id: 'openai-gpt5',
+        name: 'OpenAI GPT-5',
+        icon: '\uD83D\uDE80',
+        desc: 'Latest GPT-5 \u2014 requires API key',
+        config: { type: 'openai-compatible', url: 'https://api.openai.com/v1', model: 'gpt-5', api_key: '' }
+    },
+    {
+        id: 'groq-llama',
+        name: 'Groq (Llama 3.3 70B)',
+        icon: '\u26A1',
+        desc: 'Ultra-fast inference via Groq \u2014 requires API key',
+        config: { type: 'openai-compatible', url: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', api_key: '' }
+    },
+    {
+        id: 'anthropic-claude',
+        name: 'Anthropic Claude',
+        icon: '\uD83E\uDD9E',
+        desc: 'Claude Sonnet via OpenAI-compatible API \u2014 requires API key',
+        config: { type: 'openai-compatible', url: 'https://api.anthropic.com/v1', model: 'claude-sonnet-4-5', api_key: '' }
+    },
+    {
+        id: 'lmstudio',
+        name: 'LM Studio (Local)',
+        icon: '\uD83D\uDDA5\uFE0F',
+        desc: 'Any model via LM Studio \u2014 local, private',
+        config: { type: 'openai-compatible', url: 'http://localhost:1234/v1', model: 'auto' }
+    },
+    {
+        id: 'openclaw',
+        name: 'OpenClaw Gateway',
+        icon: '\uD83E\uDD16',
+        desc: 'Connect to your OpenClaw AI agent infrastructure',
+        config: { type: 'openclaw', url: '', token: '' }
+    },
+    {
+        id: 'n8n',
+        name: 'n8n Workflow Agent',
+        icon: '\u2699\uFE0F',
+        desc: 'Trigger n8n workflows as chat agents',
+        config: { type: 'n8n', webhook_url: '' }
+    }
+];
+
+function getInstalledPluginNames() {
+    return settingsPlugins.map(function(p) { return p.name; });
+}
+
+function renderStore(filter) {
+    var grid = document.getElementById("storeGrid");
+    grid.innerHTML = "";
+    var installed = getInstalledPluginNames();
+    var query = (filter || "").toLowerCase();
+    for (var i = 0; i < pluginPresets.length; i++) {
+        var preset = pluginPresets[i];
+        if (query && preset.name.toLowerCase().indexOf(query) === -1 &&
+            preset.desc.toLowerCase().indexOf(query) === -1) continue;
+        var isInstalled = installed.indexOf(preset.name) !== -1;
+        var card = document.createElement("div");
+        card.className = "store-card";
+        card.innerHTML =
+            '<div class="store-card-icon">' + preset.icon + '</div>' +
+            '<div class="store-card-name">' + escHtml(preset.name) + '</div>' +
+            '<div class="store-card-desc">' + escHtml(preset.desc) + '</div>' +
+            '<div class="store-card-actions">' +
+                (isInstalled
+                    ? '<span class="store-installed-badge">Installed</span>'
+                    : '<button class="store-add-btn" data-preset-idx="' + i + '">+ Add</button>') +
+            '</div>';
+        grid.appendChild(card);
+    }
+    // Bind add buttons
+    var addBtns = grid.querySelectorAll(".store-add-btn");
+    for (var j = 0; j < addBtns.length; j++) {
+        addBtns[j].addEventListener("click", (function(idx) {
+            return function() { addFromStore(idx); };
+        })(parseInt(addBtns[j].dataset.presetIdx, 10)));
+    }
+}
+
+function addFromStore(idx) {
+    var preset = pluginPresets[idx];
+    if (!preset) return;
+    var cfg = preset.config;
+    // Open the existing plugin modal with pre-filled values
+    var existing = {
+        type: cfg.type,
+        name: preset.name,
+        url: cfg.url || "",
+        token: cfg.token || "",
+        apiKey: cfg.api_key || "",
+        model: cfg.model || "",
+        webhookUrl: cfg.webhook_url || "",
+        pollUrl: "",
+        systemPrompt: ""
+    };
+    openPluginModal(existing);
+}
+
+document.getElementById("storeSearch").addEventListener("input", function() {
+    renderStore(this.value.trim());
+});
+
+// Render store when navigating to it
+var _origNavigateTo = navigateTo;
+navigateTo = function(page) {
+    _origNavigateTo(page);
+    if (page === "store") renderStore(document.getElementById("storeSearch").value.trim());
+};
 
 // Init from embedded data
 var __INIT__ = "__INIT_DATA__";

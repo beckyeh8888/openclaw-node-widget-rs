@@ -21,6 +21,28 @@ pub struct Config {
     #[serde(default)]
     pub voice: VoiceConfig,
     pub tts: TtsConfig,
+    #[serde(default)]
+    pub update: UpdateConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    pub auto_check: bool,
+    pub auto_download: bool,
+    pub auto_restart: bool,
+    pub check_interval_hours: u64,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            auto_download: true,
+            auto_restart: false,
+            check_interval_hours: 6,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +213,7 @@ impl Default for Config {
             plugins: Vec::new(),
             voice: VoiceConfig::default(),
             tts: TtsConfig::default(),
+            update: UpdateConfig::default(),
         }
     }
 }
