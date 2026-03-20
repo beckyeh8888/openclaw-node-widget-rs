@@ -96,8 +96,6 @@ pub struct ChatState {
     pub active_agent_id: String,
     /// Set to true when the app should fully quit (e.g. from tray "Quit" menu).
     pub app_quit: bool,
-    /// True while the webview event loop is running (blocking in `run_webview_window`).
-    pub event_loop_alive: bool,
 }
 
 impl Default for ChatState {
@@ -127,7 +125,6 @@ impl ChatState {
             agents: Vec::new(),
             active_agent_id: "main".to_string(),
             app_quit: false,
-            event_loop_alive: false,
         }
     }
 
@@ -246,13 +243,8 @@ pub fn run_chat_window_plugin(
     chat_state: Arc<Mutex<ChatState>>,
     cmd_senders: HashMap<String, mpsc::UnboundedSender<PluginCommand>>,
 ) -> crate::error::Result<()> {
-    if let Ok(mut state) = chat_state.lock() {
+    if let Ok(state) = chat_state.lock() {
         if state.window_open {
-            return Ok(());
-        }
-        if state.event_loop_alive {
-            // Event loop still running but window hidden — just set flag to re-show
-            state.window_open = true;
             return Ok(());
         }
     }
@@ -276,7 +268,6 @@ pub fn run_chat_window_plugin(
 
     // Ensure cleanup on exit
     if let Ok(mut state) = chat_state.lock() {
-        state.event_loop_alive = false;
         state.window_open = false;
         state.window_focused = false;
     }
@@ -339,10 +330,6 @@ fn run_webview_window(
         .build(&window)
         .map_err(|e| crate::error::AppError::Tray(format!("webview: {e}")))?;
 
-    if let Ok(mut state) = chat_state.lock() {
-        state.event_loop_alive = true;
-    }
-
     let chat_state_loop = Arc::clone(&chat_state);
 
     event_loop.run(move |event, _, control_flow| {
@@ -366,11 +353,8 @@ fn run_webview_window(
             Event::NewEvents(StartCause::ResumeTimeReached { .. })
             | Event::MainEventsCleared => {
                 // Check if the app should fully quit (e.g. tray "Quit").
-                if let Ok(mut state) = chat_state_loop.lock() {
+                if let Ok(state) = chat_state_loop.lock() {
                     if state.app_quit {
-                        state.event_loop_alive = false;
-                        state.window_open = false;
-                        state.window_focused = false;
                         *control_flow = ControlFlow::Exit;
                         return;
                     }
@@ -1174,7 +1158,6 @@ mod tests {
         assert!(!state.window_open, "window should start closed");
         assert!(state.window_focused, "window_focused defaults to true");
         assert!(!state.waiting_for_reply, "not waiting for reply initially");
-        assert!(!state.event_loop_alive, "event_loop_alive should start false");
     }
 
     // ── Adding messages ──────────────────────────────────────────────
@@ -2077,67 +2060,5 @@ mod tests {
         assert_eq!(val["agents"].as_array().unwrap().len(), 1);
         assert_eq!(val["agents"][0]["id"], "main");
         assert_eq!(val["activeAgentId"], "main");
-    }
-
-    // ── Event-loop-alive / window-reopen BDD tests ──────────────────
-
-    #[test]
-    fn given_window_open_and_event_loop_alive_when_close_then_event_loop_alive_stays_true() {
-        let mut state = ChatState::new();
-        state.window_open = true;
-        state.event_loop_alive = true;
-
-        // Simulate CloseRequested: hide window, keep event loop alive
-        state.window_open = false;
-        state.window_focused = false;
-
-        assert!(state.event_loop_alive, "event_loop_alive must remain true after close");
-        assert!(!state.window_open, "window_open should be false after close");
-    }
-
-    #[test]
-    fn given_event_loop_alive_and_window_closed_when_reopen_then_window_open_becomes_true() {
-        let cs = Arc::new(Mutex::new(ChatState::new()));
-        {
-            let mut s = cs.lock().unwrap();
-            s.event_loop_alive = true;
-            s.window_open = false;
-        }
-
-        let senders: HashMap<String, mpsc::UnboundedSender<PluginCommand>> = HashMap::new();
-        let result = run_chat_window_plugin(cs.clone(), senders);
-
-        assert!(result.is_ok());
-        let s = cs.lock().unwrap();
-        assert!(s.window_open, "window_open should be true after reopen");
-        assert!(s.event_loop_alive, "event_loop_alive should still be true");
-    }
-
-    #[test]
-    fn given_event_loop_not_alive_when_open_then_creates_new_window() {
-        let state = ChatState::new();
-        // Precondition: both false means a fresh open should create a new window
-        assert!(!state.event_loop_alive);
-        assert!(!state.window_open);
-        // We cannot call run_webview_window in unit tests (requires display),
-        // but we verify the guard logic: neither early-return branch triggers.
-        // run_chat_window_plugin would proceed past both guards to create a window.
-    }
-
-    #[test]
-    fn given_app_quit_when_event_loop_exits_then_event_loop_alive_false() {
-        let mut state = ChatState::new();
-        state.event_loop_alive = true;
-        state.window_open = true;
-        state.app_quit = true;
-
-        // Simulate the ControlFlow::Exit cleanup path
-        state.event_loop_alive = false;
-        state.window_open = false;
-        state.window_focused = false;
-
-        assert!(!state.event_loop_alive, "event_loop_alive must be false after quit");
-        assert!(!state.window_open);
-        assert!(!state.window_focused);
     }
 }
