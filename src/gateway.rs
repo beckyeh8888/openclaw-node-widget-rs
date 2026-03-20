@@ -785,6 +785,21 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
         return;
     }
 
+    // DEBUG: dump full chat event payload
+    {
+        let line = format!("[{}] state={} runId={:?} seq={:?} msgId={:?} text_len={} full={}\n",
+            chrono::Local::now().format("%H:%M:%S"),
+            payload.get("state").and_then(Value::as_str).unwrap_or("-"),
+            payload.get("runId").and_then(Value::as_str),
+            payload.get("seq").and_then(Value::as_u64),
+            payload.get("msgId").and_then(Value::as_str),
+            payload.get("message").map(|m| format!("{}", m.to_string().len())).unwrap_or_else(|| "-".to_string()),
+            serde_json::to_string(payload).unwrap_or_default().chars().take(300).collect::<String>()
+        );
+        let _ = std::fs::OpenOptions::new().create(true).append(true).open("widget-chat-debug2.log")
+            .map(|mut f| { use std::io::Write; let _ = f.write_all(line.as_bytes()); });
+    }
+
     // Extract text from various Gateway chat event formats:
     // 1. payload.text (simple)
     // 2. payload.message (string)
