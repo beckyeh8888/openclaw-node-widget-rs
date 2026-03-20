@@ -235,7 +235,7 @@ pub fn run_chat_window(
     // Build a single-entry sender map keyed by "default"
     let mut senders = HashMap::new();
     senders.insert("default".to_string(), plugin_tx);
-    run_chat_window_plugin(chat_state, senders, None)
+    run_chat_window_plugin(chat_state, senders, TrayMenuIds::default())
 }
 
 /// Open the chat window routing commands through the plugin system.
@@ -243,10 +243,18 @@ pub fn run_chat_window(
 /// `chat_menu_id` is the tray menu item ID for "Chat". When provided, the
 /// webview event loop polls `MenuEvent::receiver()` directly so that tray
 /// re-open requests work even while this function is blocking the main thread.
+/// IDs for tray menu items that the webview event loop needs to handle
+/// directly (because the main loop is blocked while the event loop runs).
+#[derive(Clone, Default)]
+pub struct TrayMenuIds {
+    pub chat: Option<tray_icon::menu::MenuId>,
+    pub exit: Option<tray_icon::menu::MenuId>,
+}
+
 pub fn run_chat_window_plugin(
     chat_state: Arc<Mutex<ChatState>>,
     cmd_senders: HashMap<String, mpsc::UnboundedSender<PluginCommand>>,
-    chat_menu_id: Option<tray_icon::menu::MenuId>,
+    tray_ids: TrayMenuIds,
 ) -> crate::error::Result<()> {
     if let Ok(state) = chat_state.lock() {
         if state.window_open {
@@ -269,7 +277,7 @@ pub fn run_chat_window_plugin(
     let html_template = include_str!("chat_ui.html");
     let html = html_template.replace("\"__INIT_DATA__\"", &init_json);
 
-    let result = run_webview_window(html, chat_state.clone(), cmd_senders, chat_menu_id);
+    let result = run_webview_window(html, chat_state.clone(), cmd_senders, tray_ids);
 
     // Ensure cleanup on exit
     if let Ok(mut state) = chat_state.lock() {
@@ -304,7 +312,7 @@ fn run_webview_window(
     html: String,
     chat_state: Arc<Mutex<ChatState>>,
     cmd_senders: HashMap<String, mpsc::UnboundedSender<PluginCommand>>,
-    chat_menu_id: Option<tray_icon::menu::MenuId>,
+    tray_ids: TrayMenuIds,
 ) -> crate::error::Result<()> {
     use tao::dpi::LogicalSize;
     use tao::event::{Event, StartCause, WindowEvent};
@@ -367,15 +375,23 @@ fn run_webview_window(
                 }
 
                 // Poll tray menu events directly (works even when main loop
-                // is blocked by this event loop). If the Chat menu item is
-                // clicked, set window_open so the window re-appears.
-                if let Some(ref mid) = chat_menu_id {
-                    while let Ok(evt) = tray_icon::menu::MenuEvent::receiver().try_recv() {
-                        if &evt.id == mid {
-                            if let Ok(mut state) = chat_state_loop.lock() {
-                                state.window_open = true;
-                            }
+                // is blocked by this event loop).
+                while let Ok(evt) = tray_icon::menu::MenuEvent::receiver().try_recv() {
+                    if tray_ids.chat.as_ref() == Some(&evt.id) {
+                        // Chat clicked → re-show window
+                        if let Ok(mut state) = chat_state_loop.lock() {
+                            state.window_open = true;
                         }
+                    } else if tray_ids.exit.as_ref() == Some(&evt.id) {
+                        // Exit clicked → quit the app immediately.
+                        // ControlFlow::Exit may not reliably terminate on all
+                        // platforms, so force exit after cleanup.
+                        if let Ok(mut state) = chat_state_loop.lock() {
+                            state.app_quit = true;
+                            state.window_open = false;
+                        }
+                        *control_flow = ControlFlow::Exit;
+                        std::process::exit(0);
                     }
                 }
 
