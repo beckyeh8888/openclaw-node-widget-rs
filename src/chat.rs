@@ -47,6 +47,9 @@ pub enum ChatInbound {
     },
     Connected,
     Disconnected,
+    VoiceTranscription {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -498,6 +501,11 @@ pub fn handle_ipc_message(
                     api_key: pj.get("apiKey").and_then(|v| v.as_str()).map(String::from),
                     webhook_url: pj.get("webhookUrl").and_then(|v| v.as_str()).map(String::from),
                     poll_url: pj.get("pollUrl").and_then(|v| v.as_str()).map(String::from),
+                    transport: pj.get("transport").and_then(|v| v.as_str()).map(String::from),
+                    command: pj.get("command").and_then(|v| v.as_str()).map(String::from),
+                    args: pj.get("args").and_then(|v| v.as_array()).map(|a| {
+                        a.iter().filter_map(|s| s.as_str().map(String::from)).collect()
+                    }),
                 };
                 if !pc.name.is_empty() {
                     match Config::load() {
@@ -540,6 +548,41 @@ pub fn handle_ipc_message(
                 }
                 Err(e) => warn!("failed to load config for saveGeneral: {e}"),
             }
+        }
+        "voice" => {
+            let audio = msg
+                .get("audio")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if audio.is_empty() {
+                warn!("voice IPC message with empty audio");
+                return;
+            }
+            let chat_state = Arc::clone(chat_state);
+            tokio::spawn(async move {
+                let voice_config = match crate::config::Config::load() {
+                    Ok(c) => c.voice,
+                    Err(_) => crate::config::VoiceConfig::default(),
+                };
+                match crate::voice::transcribe(&audio, &voice_config).await {
+                    Ok(text) => {
+                        if let Ok(mut state) = chat_state.lock() {
+                            state.inbox.push(ChatInbound::VoiceTranscription {
+                                text,
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        warn!("voice transcription failed: {e}");
+                        if let Ok(mut state) = chat_state.lock() {
+                            state.inbox.push(ChatInbound::VoiceTranscription {
+                                text: String::new(),
+                            });
+                        }
+                    }
+                }
+            });
         }
         _ => {
             warn!("unknown IPC message type: {msg_type}");
@@ -645,6 +688,13 @@ fn process_inbox_to_webview(
                 let _ = webview.evaluate_script("setConnected(false)");
                 let _ = webview.evaluate_script("setTyping(false)");
             }
+            ChatInbound::VoiceTranscription { text } => {
+                let escaped = text.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n");
+                let _ = webview.evaluate_script(&format!(
+                    "if(typeof onVoiceTranscription==='function')onVoiceTranscription('{}')",
+                    escaped
+                ));
+            }
         }
     }
 
@@ -676,6 +726,9 @@ fn process_inbox_to_webview(
                             "apiKey": p.api_key,
                             "webhookUrl": p.webhook_url,
                             "pollUrl": p.poll_url,
+                            "transport": p.transport,
+                            "command": p.command,
+                            "args": p.args,
                         })
                     })
                     .collect();

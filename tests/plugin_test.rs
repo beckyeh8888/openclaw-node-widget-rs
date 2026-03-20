@@ -362,6 +362,9 @@ fn scenario_config_plugins_take_precedence() {
         api_key: None,
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     });
 
     let plugins = config.effective_plugins();

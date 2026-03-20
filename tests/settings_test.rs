@@ -25,6 +25,9 @@ fn scenario_add_new_plugin() {
         api_key: None,
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     });
 
     assert_eq!(config.plugins.len(), 1);
@@ -48,6 +51,9 @@ fn scenario_update_existing_plugin() {
         api_key: Some("sk-old".to_string()),
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     });
 
     // Update with new model
@@ -60,6 +66,9 @@ fn scenario_update_existing_plugin() {
         api_key: Some("sk-new".to_string()),
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     });
 
     assert_eq!(config.plugins.len(), 1, "should not duplicate");
@@ -83,6 +92,9 @@ fn scenario_remove_plugin() {
         api_key: None,
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     });
     config.upsert_plugin(PluginConfig {
         plugin_type: "openai-compatible".to_string(),
@@ -93,6 +105,9 @@ fn scenario_remove_plugin() {
         api_key: None,
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     });
     assert_eq!(config.plugins.len(), 2);
 
@@ -118,6 +133,9 @@ fn scenario_remove_nonexistent_plugin() {
         api_key: None,
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     });
 
     let removed = config.remove_plugin("DoesNotExist");
@@ -141,6 +159,9 @@ fn scenario_add_n8n_plugin() {
         api_key: None,
         webhook_url: Some("https://n8n.example.com/webhook/abc".to_string()),
         poll_url: Some("https://n8n.example.com/webhook/abc/poll".to_string()),
+        transport: None,
+        command: None,
+        args: None,
     });
 
     assert_eq!(config.plugins.len(), 1);
@@ -236,6 +257,9 @@ fn scenario_multiple_plugin_operations() {
         api_key: None,
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     });
     config.upsert_plugin(PluginConfig {
         plugin_type: "ollama".to_string(),
@@ -246,6 +270,9 @@ fn scenario_multiple_plugin_operations() {
         api_key: None,
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     });
     config.upsert_plugin(PluginConfig {
         plugin_type: "n8n".to_string(),
@@ -256,6 +283,9 @@ fn scenario_multiple_plugin_operations() {
         api_key: None,
         webhook_url: Some("https://n8n.example.com/webhook/xyz".to_string()),
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     });
 
     assert_eq!(config.plugins.len(), 3);

@@ -353,6 +353,32 @@ body {
 }
 #sendBtn:hover { background: #0073e6; }
 #sendBtn:disabled { opacity: 0.35; cursor: not-allowed; }
+#micBtn {
+  background: none;
+  border: none;
+  border-radius: 50%;
+  width: 34px; height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+  font-size: 16px;
+  color: #888;
+  flex-shrink: 0;
+}
+#micBtn:hover { color: #fff; background: rgba(255,255,255,0.1); }
+#micBtn.recording { color: #ff4444; animation: pulse-mic 1s infinite; }
+@keyframes pulse-mic {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+#recordingLabel {
+  font-size: 11px;
+  color: #ff4444;
+  display: none;
+  white-space: nowrap;
+}
 
 /* ── Dashboard page ──────────────────────────────────── */
 .dash-header {
@@ -769,6 +795,8 @@ body {
     <div id="inputBar">
       <button id="uploadBtn" title="Upload image">📎</button>
       <input type="text" id="messageInput" placeholder="Type a message..." disabled>
+      <span id="recordingLabel">Recording...</span>
+      <button id="micBtn" title="Voice input">🎤</button>
       <button id="sendBtn" disabled>▶</button>
       <input type="file" id="fileInput" accept="image/*" style="display:none">
     </div>
@@ -1644,6 +1672,90 @@ md.addEventListener("drop", function(e) {
   e.preventDefault();
   if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
 });
+
+// ── Voice Input ────────────────────────────────────────
+var _mediaRecorder = null;
+var _audioChunks = [];
+var _isRecording = false;
+var _recordingTimeout = null;
+
+function startRecording() {
+  if (_isRecording) { stopRecording(); return; }
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+    _audioChunks = [];
+    _mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
+    _mediaRecorder.ondataavailable = function(e) { if (e.data.size > 0) _audioChunks.push(e.data); };
+    _mediaRecorder.onstop = function() {
+      stream.getTracks().forEach(function(t) { t.stop(); });
+      var blob = new Blob(_audioChunks, { type: "audio/webm" });
+      var reader = new FileReader();
+      reader.onloadend = function() {
+        var base64 = reader.result.split(",")[1] || "";
+        if (base64) {
+          window.ipc.postMessage(JSON.stringify({ type: "voice", audio: base64 }));
+        }
+      };
+      reader.readAsDataURL(blob);
+      setRecordingUI(false);
+    };
+    _mediaRecorder.start();
+    _isRecording = true;
+    setRecordingUI(true);
+    // Max 30 seconds
+    _recordingTimeout = setTimeout(function() { if (_isRecording) stopRecording(); }, 30000);
+  }).catch(function(err) {
+    console.warn("Microphone access denied:", err);
+  });
+}
+
+function stopRecording() {
+  if (_mediaRecorder && _isRecording) {
+    _isRecording = false;
+    clearTimeout(_recordingTimeout);
+    _mediaRecorder.stop();
+  }
+}
+
+function setRecordingUI(on) {
+  var btn = document.getElementById("micBtn");
+  var label = document.getElementById("recordingLabel");
+  if (on) {
+    btn.classList.add("recording");
+    label.style.display = "inline";
+  } else {
+    btn.classList.remove("recording");
+    label.style.display = "none";
+  }
+}
+
+function onVoiceTranscription(text) {
+  if (text) {
+    var input = document.getElementById("messageInput");
+    input.value = text;
+    input.focus();
+    updateSend();
+  }
+}
+
+// Mic button: click to toggle, hold for push-to-talk
+(function() {
+  var btn = document.getElementById("micBtn");
+  var holdTimer = null;
+  var wasHold = false;
+  btn.addEventListener("mousedown", function() {
+    wasHold = false;
+    holdTimer = setTimeout(function() { wasHold = true; startRecording(); }, 300);
+  });
+  btn.addEventListener("mouseup", function() {
+    clearTimeout(holdTimer);
+    if (wasHold) { stopRecording(); }
+    else { startRecording(); }
+  });
+  btn.addEventListener("mouseleave", function() {
+    clearTimeout(holdTimer);
+    if (wasHold && _isRecording) stopRecording();
+  });
+})();
 
 // Init from embedded data
 var __INIT__ = "__INIT_DATA__";

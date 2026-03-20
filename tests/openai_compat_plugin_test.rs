@@ -79,6 +79,9 @@ fn scenario_config_parsing() {
         api_key: Some("sk-testkey".to_string()),
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     };
 
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
@@ -104,6 +107,9 @@ fn scenario_lm_studio_config() {
         api_key: None,
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     };
 
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
@@ -159,6 +165,9 @@ fn scenario_empty_url_fails() {
         api_key: None,
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let mut plugin = OpenAICompatPlugin::new(&config, chat_state);

@@ -18,6 +18,8 @@ pub struct Config {
     pub connections: Vec<ConnectionConfig>,
     #[serde(default)]
     pub plugins: Vec<PluginConfig>,
+    #[serde(default)]
+    pub voice: VoiceConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +55,35 @@ pub struct PluginConfig {
     pub webhook_url: Option<String>,
     #[serde(default)]
     pub poll_url: Option<String>,
+    /// MCP transport type: "stdio" or "sse"
+    #[serde(default)]
+    pub transport: Option<String>,
+    /// MCP stdio command (e.g. "npx")
+    #[serde(default)]
+    pub command: Option<String>,
+    /// MCP stdio command args
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VoiceConfig {
+    pub enabled: bool,
+    pub provider: String,
+    pub openai_api_key: Option<String>,
+    pub language: String,
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: "local".to_string(),
+            openai_api_key: None,
+            language: "auto".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +153,7 @@ impl Default for Config {
             log: LogConfig::default(),
             connections: Vec::new(),
             plugins: Vec::new(),
+            voice: VoiceConfig::default(),
         }
     }
 }
@@ -236,6 +268,9 @@ impl Config {
                 api_key: None,
                 webhook_url: None,
                 poll_url: None,
+                transport: None,
+                command: None,
+                args: None,
             })
             .collect()
     }
@@ -336,6 +371,9 @@ impl Config {
                     api_key: None,
                     webhook_url: None,
                     poll_url: None,
+                    transport: None,
+                    command: None,
+                    args: None,
                 })
                 .collect();
         }

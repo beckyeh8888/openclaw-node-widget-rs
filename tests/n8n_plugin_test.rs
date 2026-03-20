@@ -81,6 +81,9 @@ fn scenario_config_parsing() {
         api_key: None,
         webhook_url: Some("https://n8n.example.com/webhook/abc".to_string()),
         poll_url: Some("https://n8n.example.com/webhook/abc/poll".to_string()),
+        transport: None,
+        command: None,
+        args: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = N8nPlugin::new(&config, chat_state);
@@ -106,6 +109,9 @@ fn scenario_config_url_fallback() {
         api_key: None,
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = N8nPlugin::new(&config, chat_state);
@@ -129,6 +135,9 @@ fn scenario_starts_disconnected() {
         api_key: None,
         webhook_url: Some("https://n8n.example.com/webhook/abc".to_string()),
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = N8nPlugin::new(&config, chat_state);
@@ -150,6 +159,9 @@ fn scenario_connect_fails_without_webhook_url() {
         api_key: None,
         webhook_url: None,
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let mut plugin = N8nPlugin::new(&config, chat_state);
@@ -173,6 +185,9 @@ fn scenario_send_before_connect_fails() {
         api_key: None,
         webhook_url: Some("https://n8n.example.com/webhook/abc".to_string()),
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = N8nPlugin::new(&config, chat_state);
@@ -194,6 +209,9 @@ fn scenario_capabilities() {
         api_key: None,
         webhook_url: Some("https://example.com".to_string()),
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = N8nPlugin::new(&config, chat_state);
@@ -248,6 +266,9 @@ fn scenario_disconnect_clears_state() {
         api_key: None,
         webhook_url: Some("https://example.com".to_string()),
         poll_url: None,
+        transport: None,
+        command: None,
+        args: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let mut plugin = N8nPlugin::new(&config, chat_state);

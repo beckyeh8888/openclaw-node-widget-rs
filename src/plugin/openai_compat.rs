@@ -562,6 +562,9 @@ data: [DONE]
             api_key: Some("sk-test".to_string()),
             webhook_url: None,
             poll_url: None,
+            transport: None,
+            command: None,
+            args: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = OpenAICompatPlugin::new(&config, chat_state);
@@ -584,6 +587,9 @@ data: [DONE]
             api_key: None,
             webhook_url: None,
             poll_url: None,
+            transport: None,
+            command: None,
+            args: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = OpenAICompatPlugin::new(&config, chat_state);
@@ -602,6 +608,9 @@ data: [DONE]
             api_key: None,
             webhook_url: None,
             poll_url: None,
+            transport: None,
+            command: None,
+            args: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let mut plugin = OpenAICompatPlugin::new(&config, chat_state);
@@ -629,6 +638,9 @@ data: [DONE]
             api_key: None,
             webhook_url: None,
             poll_url: None,
+            transport: None,
+            command: None,
+            args: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = OpenAICompatPlugin::new(&config, chat_state);

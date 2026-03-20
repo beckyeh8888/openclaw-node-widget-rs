@@ -1,3 +1,4 @@
+pub mod mcp;
 pub mod n8n;
 pub mod openclaw;
 pub mod ollama;
