@@ -1029,11 +1029,19 @@ fn handle_chat_response(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload
                 let session_key = a
                     .get("sessionKey")
                     .and_then(Value::as_str)
-                    .unwrap_or(id);
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        // Gateway expects canonical session keys like "agent:{id}:main"
+                        if id == "main" {
+                            "main".to_string()
+                        } else {
+                            format!("agent:{}:main", id)
+                        }
+                    });
                 Some(AgentInfo {
                     id: id.to_string(),
                     name: name.to_string(),
-                    session_key: session_key.to_string(),
+                    session_key,
                     agent_type: "openclaw".to_string(),
                 })
             })
