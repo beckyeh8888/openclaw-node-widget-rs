@@ -34,6 +34,7 @@ fn scenario_config_parsing_stdio_transport() {
             "@anthropic/mcp-server-filesystem".to_string(),
             "/home".to_string(),
         ]),
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = McpPlugin::new(&config, chat_state);
@@ -69,6 +70,7 @@ fn scenario_config_parsing_sse_transport() {
         transport: Some("sse".to_string()),
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = McpPlugin::new(&config, chat_state);
@@ -235,6 +237,7 @@ fn scenario_plugin_capabilities_chat_only() {
         transport: Some("stdio".to_string()),
         command: Some("echo".to_string()),
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = McpPlugin::new(&config, chat_state);
@@ -261,6 +264,7 @@ fn scenario_connect_fails_without_command() {
         transport: Some("stdio".to_string()),
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let mut plugin = McpPlugin::new(&config, chat_state);
@@ -284,6 +288,7 @@ fn scenario_connect_fails_without_url_sse() {
         transport: Some("sse".to_string()),
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let mut plugin = McpPlugin::new(&config, chat_state);
@@ -307,6 +312,7 @@ fn scenario_disconnect_clears_state() {
         transport: Some("stdio".to_string()),
         command: Some("echo".to_string()),
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let mut plugin = McpPlugin::new(&config, chat_state);
@@ -332,6 +338,7 @@ fn scenario_plugin_icon() {
         transport: Some("stdio".to_string()),
         command: Some("echo".to_string()),
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = McpPlugin::new(&config, chat_state);

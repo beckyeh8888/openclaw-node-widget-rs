@@ -98,6 +98,7 @@ pub struct OpenAICompatPlugin {
     url: String,
     model: String,
     api_key: Option<String>,
+    system_prompt: Arc<Mutex<Option<String>>>,
     status: Arc<Mutex<ConnectionStatus>>,
     history: Arc<Mutex<Vec<OpenAIMessage>>>,
     chat_state: Arc<Mutex<ChatState>>,
@@ -120,6 +121,7 @@ impl OpenAICompatPlugin {
                 .clone()
                 .unwrap_or_else(|| "gpt-4o".to_string()),
             api_key: config.api_key.clone(),
+            system_prompt: Arc::new(Mutex::new(config.system_prompt.clone())),
             status: Arc::new(Mutex::new(ConnectionStatus::Disconnected)),
             history: Arc::new(Mutex::new(Vec::new())),
             chat_state,
@@ -133,12 +135,29 @@ impl OpenAICompatPlugin {
         self.event_tx = Some(tx);
     }
 
-    /// Build messages array from history + new user message.
+    /// Update the system prompt at runtime.
+    pub fn set_system_prompt(&self, prompt: Option<String>) {
+        if let Ok(mut sp) = self.system_prompt.lock() {
+            *sp = prompt;
+        }
+    }
+
+    /// Build messages array from optional system prompt + history + new user message.
     pub fn build_messages(
+        system_prompt: Option<&str>,
         history: &[OpenAIMessage],
         user_message: &str,
     ) -> Vec<OpenAIMessage> {
-        let mut messages: Vec<OpenAIMessage> = history.to_vec();
+        let mut messages: Vec<OpenAIMessage> = Vec::new();
+        if let Some(sp) = system_prompt {
+            if !sp.is_empty() {
+                messages.push(OpenAIMessage {
+                    role: "system".to_string(),
+                    content: sp.to_string(),
+                });
+            }
+        }
+        messages.extend_from_slice(history);
         messages.push(OpenAIMessage {
             role: "user".to_string(),
             content: user_message.to_string(),
@@ -231,6 +250,7 @@ impl AgentPlugin for OpenAICompatPlugin {
         let plugin_id = self.id.clone();
         let event_tx = self.event_tx.clone();
         let api_key = self.api_key.clone();
+        let system_prompt = Arc::clone(&self.system_prompt);
 
         // Spawn command handler
         tokio::spawn(async move {
@@ -243,7 +263,8 @@ impl AgentPlugin for OpenAICompatPlugin {
                     } => {
                         let messages = {
                             let h = history.lock().unwrap();
-                            OpenAICompatPlugin::build_messages(&h, &message)
+                            let sp = system_prompt.lock().unwrap();
+                            OpenAICompatPlugin::build_messages(sp.as_deref(), &h, &message)
                         };
 
                         let request = OpenAIRequest {
@@ -538,7 +559,7 @@ data: [DONE]
                 content: "hi".to_string(),
             },
         ];
-        let messages = OpenAICompatPlugin::build_messages(&history, "how are you?");
+        let messages = OpenAICompatPlugin::build_messages(None, &history, "how are you?");
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[2].role, "user");
         assert_eq!(messages[2].content, "how are you?");
@@ -546,7 +567,7 @@ data: [DONE]
 
     #[test]
     fn build_messages_empty_history() {
-        let messages = OpenAICompatPlugin::build_messages(&[], "first");
+        let messages = OpenAICompatPlugin::build_messages(None, &[], "first");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, "user");
     }
@@ -565,6 +586,7 @@ data: [DONE]
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = OpenAICompatPlugin::new(&config, chat_state);
@@ -590,6 +612,7 @@ data: [DONE]
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = OpenAICompatPlugin::new(&config, chat_state);
@@ -611,6 +634,7 @@ data: [DONE]
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let mut plugin = OpenAICompatPlugin::new(&config, chat_state);
@@ -641,6 +665,7 @@ data: [DONE]
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = OpenAICompatPlugin::new(&config, chat_state);

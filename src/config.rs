@@ -65,6 +65,9 @@ pub struct PluginConfig {
     /// MCP stdio command args
     #[serde(default)]
     pub args: Option<Vec<String>>,
+    /// Optional system prompt sent as the first message to the LLM.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +296,7 @@ impl Config {
                 transport: None,
                 command: None,
                 args: None,
+                system_prompt: None,
             })
             .collect()
     }
@@ -396,6 +400,7 @@ impl Config {
                     transport: None,
                     command: None,
                     args: None,
+                    system_prompt: None,
                 })
                 .collect();
         }

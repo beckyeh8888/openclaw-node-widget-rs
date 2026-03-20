@@ -84,6 +84,7 @@ fn scenario_config_parsing() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = N8nPlugin::new(&config, chat_state);
@@ -112,6 +113,7 @@ fn scenario_config_url_fallback() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = N8nPlugin::new(&config, chat_state);
@@ -138,6 +140,7 @@ fn scenario_starts_disconnected() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = N8nPlugin::new(&config, chat_state);
@@ -162,6 +165,7 @@ fn scenario_connect_fails_without_webhook_url() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let mut plugin = N8nPlugin::new(&config, chat_state);
@@ -188,6 +192,7 @@ fn scenario_send_before_connect_fails() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = N8nPlugin::new(&config, chat_state);
@@ -212,6 +217,7 @@ fn scenario_capabilities() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = N8nPlugin::new(&config, chat_state);
@@ -269,6 +275,7 @@ fn scenario_disconnect_clears_state() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let mut plugin = N8nPlugin::new(&config, chat_state);

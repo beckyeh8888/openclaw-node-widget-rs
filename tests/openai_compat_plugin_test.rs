@@ -82,6 +82,7 @@ fn scenario_config_parsing() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
 
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
@@ -110,6 +111,7 @@ fn scenario_lm_studio_config() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
 
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
@@ -144,7 +146,7 @@ fn scenario_conversation_history_maintained() {
         },
     ];
 
-    let messages = OpenAICompatPlugin::build_messages(&history, "new message");
+    let messages = OpenAICompatPlugin::build_messages(None, &history, "new message");
 
     assert_eq!(messages.len(), 3);
     assert_eq!(messages[0].content, "hello");
@@ -168,6 +170,7 @@ fn scenario_empty_url_fails() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let mut plugin = OpenAICompatPlugin::new(&config, chat_state);

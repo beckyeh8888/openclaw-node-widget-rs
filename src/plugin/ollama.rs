@@ -80,6 +80,7 @@ pub struct OllamaPlugin {
     plugin_name: String,
     url: String,
     model: String,
+    system_prompt: Arc<Mutex<Option<String>>>,
     status: Arc<Mutex<ConnectionStatus>>,
     history: Arc<Mutex<Vec<OllamaMessage>>>,
     chat_state: Arc<Mutex<ChatState>>,
@@ -101,6 +102,7 @@ impl OllamaPlugin {
                 .model
                 .clone()
                 .unwrap_or_else(|| "llama3.3".to_string()),
+            system_prompt: Arc::new(Mutex::new(config.system_prompt.clone())),
             status: Arc::new(Mutex::new(ConnectionStatus::Disconnected)),
             history: Arc::new(Mutex::new(Vec::new())),
             chat_state,
@@ -114,12 +116,29 @@ impl OllamaPlugin {
         self.event_tx = Some(tx);
     }
 
-    /// Build messages array from history + new user message.
+    /// Update the system prompt at runtime.
+    pub fn set_system_prompt(&self, prompt: Option<String>) {
+        if let Ok(mut sp) = self.system_prompt.lock() {
+            *sp = prompt;
+        }
+    }
+
+    /// Build messages array from optional system prompt + history + new user message.
     pub fn build_messages(
+        system_prompt: Option<&str>,
         history: &[OllamaMessage],
         user_message: &str,
     ) -> Vec<OllamaMessage> {
-        let mut messages: Vec<OllamaMessage> = history.to_vec();
+        let mut messages: Vec<OllamaMessage> = Vec::new();
+        if let Some(sp) = system_prompt {
+            if !sp.is_empty() {
+                messages.push(OllamaMessage {
+                    role: "system".to_string(),
+                    content: sp.to_string(),
+                });
+            }
+        }
+        messages.extend_from_slice(history);
         messages.push(OllamaMessage {
             role: "user".to_string(),
             content: user_message.to_string(),
@@ -201,6 +220,7 @@ impl AgentPlugin for OllamaPlugin {
                 let url = self.url.clone();
                 let plugin_id = self.id.clone();
                 let event_tx = self.event_tx.clone();
+                let system_prompt = Arc::clone(&self.system_prompt);
 
                 // Spawn command handler
                 tokio::spawn(async move {
@@ -213,7 +233,8 @@ impl AgentPlugin for OllamaPlugin {
                             } => {
                                 let messages = {
                                     let h = history.lock().unwrap();
-                                    OllamaPlugin::build_messages(&h, &message)
+                                    let sp = system_prompt.lock().unwrap();
+                                    OllamaPlugin::build_messages(sp.as_deref(), &h, &message)
                                 };
 
                                 let request = OllamaRequest {
@@ -481,7 +502,7 @@ mod tests {
                 content: "hi".to_string(),
             },
         ];
-        let messages = OllamaPlugin::build_messages(&history, "how are you?");
+        let messages = OllamaPlugin::build_messages(None, &history, "how are you?");
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].content, "hello");
@@ -493,7 +514,7 @@ mod tests {
 
     #[test]
     fn build_messages_empty_history() {
-        let messages = OllamaPlugin::build_messages(&[], "first message");
+        let messages = OllamaPlugin::build_messages(None, &[], "first message");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role, "user");
         assert_eq!(messages[0].content, "first message");
@@ -513,6 +534,7 @@ mod tests {
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = OllamaPlugin::new(&config, chat_state);
@@ -537,6 +559,7 @@ mod tests {
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = OllamaPlugin::new(&config, chat_state);
@@ -558,6 +581,7 @@ mod tests {
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let mut plugin = OllamaPlugin::new(&config, chat_state);
@@ -589,6 +613,7 @@ mod tests {
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = OllamaPlugin::new(&config, chat_state);

@@ -833,6 +833,42 @@ body {
   justify-content: flex-end;
   margin-top: 12px;
 }
+.modal-field textarea {
+  width: 100%;
+  background: #2d2d44;
+  color: #fff;
+  border: 1px solid #3d3d5c;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 60px;
+  font-family: inherit;
+}
+.modal-field textarea:focus { border-color: #0084ff; }
+
+/* ── Syntax highlighting ─────────────────────────────── */
+.hl-keyword { color: #c678dd; }
+.hl-string { color: #98c379; }
+.hl-comment { color: #5c6370; font-style: italic; }
+.hl-number { color: #d19a66; }
+.hl-function { color: #61afef; }
+.hl-type { color: #e5c07b; }
+.hl-operator { color: #56b6c2; }
+pre code { line-height: 1.5; tab-size: 4; }
+
+/* ── Clipboard image preview ─────────────────────────── */
+#clipboardPreview {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 16px;
+  background: #16213e;
+  border-top: 1px solid #2d2d44;
+}
+#clipboardPreview img { max-height: 60px; border-radius: 6px; }
 </style>
 </head>
 <body>
@@ -990,6 +1026,10 @@ body {
         <label>Poll URL (optional)</label>
         <input type="text" id="modalPluginPoll" placeholder="https://n8n.example.com/webhook/.../poll">
       </div>
+      <div class="modal-field" id="modalSystemPromptField">
+        <label>System Prompt</label>
+        <textarea id="modalPluginSystemPrompt" placeholder="You are a helpful assistant..." rows="3"></textarea>
+      </div>
       <input type="hidden" id="modalEditOriginalName" value="">
       <div class="modal-actions">
         <button class="settings-footer-btn secondary" id="modalCancelBtn">Cancel</button>
@@ -1104,6 +1144,73 @@ function scrollBottom() {
   requestAnimationFrame(function() { c.scrollTop = c.scrollHeight; });
 }
 
+// ── Syntax highlighting (vanilla JS) ─────────────────────
+var HL_KEYWORDS = {
+  javascript: /\b(function|const|let|var|if|else|return|class|import|from|export|async|await|for|while|do|switch|case|break|continue|try|catch|throw|new|this|typeof|instanceof|in|of|default|yield|delete|void|null|undefined|true|false)\b/g,
+  typescript: /\b(function|const|let|var|if|else|return|class|import|from|export|async|await|for|while|do|switch|case|break|continue|try|catch|throw|new|this|typeof|instanceof|in|of|default|yield|delete|void|null|undefined|true|false|type|interface|enum|implements|extends|public|private|protected|readonly|abstract|declare|namespace|module|as|is|keyof|never|unknown|any|string|number|boolean|symbol|bigint)\b/g,
+  python: /\b(def|class|import|from|return|if|elif|else|for|while|try|except|finally|with|as|yield|lambda|pass|break|continue|raise|and|or|not|in|is|True|False|None|global|nonlocal|assert|del|async|await|print|self)\b/g,
+  rust: /\b(fn|let|mut|const|if|else|match|loop|while|for|in|return|struct|enum|impl|trait|pub|use|mod|crate|super|self|Self|type|where|async|await|move|ref|static|unsafe|extern|dyn|true|false|as|break|continue|Box|Vec|String|Option|Result|Some|None|Ok|Err)\b/g,
+  html: /\b(html|head|body|div|span|p|a|img|ul|ol|li|table|tr|td|th|form|input|button|script|style|link|meta|title|h[1-6]|section|nav|header|footer|main|article|aside)\b/g,
+  css: /\b(color|background|margin|padding|border|display|flex|grid|position|font|width|height|top|left|right|bottom|z-index|overflow|opacity|transition|transform|animation|align|justify|content|items|gap|none|block|inline|absolute|relative|fixed|solid|auto|inherit|initial|important)\b/g,
+  json: null,
+  sql: /\b(SELECT|FROM|WHERE|INSERT|UPDATE|DELETE|CREATE|DROP|ALTER|TABLE|INDEX|JOIN|LEFT|RIGHT|INNER|OUTER|ON|AND|OR|NOT|IN|IS|NULL|AS|ORDER|BY|GROUP|HAVING|LIMIT|OFFSET|UNION|ALL|DISTINCT|SET|INTO|VALUES|COUNT|SUM|AVG|MAX|MIN|LIKE|BETWEEN|EXISTS|CASE|WHEN|THEN|ELSE|END|PRIMARY|KEY|FOREIGN|REFERENCES|CASCADE|BEGIN|COMMIT|ROLLBACK)\b/gi,
+  bash: /\b(if|then|else|elif|fi|for|while|do|done|case|esac|function|return|local|export|source|echo|exit|cd|ls|grep|awk|sed|cat|mkdir|rm|cp|mv|chmod|chown|sudo|apt|yum|pip|npm|git|docker|curl|wget|true|false|test)\b/g,
+  sh: null
+};
+// sh aliases to bash
+HL_KEYWORDS.sh = HL_KEYWORDS.bash;
+// js/ts aliases
+HL_KEYWORDS.js = HL_KEYWORDS.javascript;
+HL_KEYWORDS.ts = HL_KEYWORDS.typescript;
+HL_KEYWORDS.tsx = HL_KEYWORDS.typescript;
+HL_KEYWORDS.jsx = HL_KEYWORDS.javascript;
+HL_KEYWORDS.py = HL_KEYWORDS.python;
+HL_KEYWORDS.rs = HL_KEYWORDS.rust;
+HL_KEYWORDS.zsh = HL_KEYWORDS.bash;
+HL_KEYWORDS.shell = HL_KEYWORDS.bash;
+
+function highlightCode(code, lang) {
+  lang = (lang || '').toLowerCase();
+  if (!lang || !HL_KEYWORDS[lang]) {
+    // For JSON, just highlight strings and numbers
+    if (lang === 'json') {
+      return code
+        .replace(/(\"(?:[^\"\\]|\\.)*\")\s*:/g, '<span class="hl-type">$1</span>:')
+        .replace(/:\s*(\"(?:[^\"\\]|\\.)*\")/g, ': <span class="hl-string">$1</span>')
+        .replace(/:\s*(\d+\.?\d*)/g, ': <span class="hl-number">$1</span>')
+        .replace(/:\s*(true|false|null)\b/g, ': <span class="hl-keyword">$1</span>');
+    }
+    return code; // Unknown language — no highlighting
+  }
+
+  // Tokenize: extract comments, strings, and the rest
+  var tokens = [];
+  var re = /(\/\/.*$|\/\*[\s\S]*?\*\/|#.*$|<!--[\s\S]*?-->)|(\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/gm;
+  var lastIdx = 0;
+  var m;
+  while ((m = re.exec(code)) !== null) {
+    if (m.index > lastIdx) tokens.push({ type: 'code', text: code.slice(lastIdx, m.index) });
+    if (m[1]) tokens.push({ type: 'comment', text: m[1] });
+    else if (m[2]) tokens.push({ type: 'string', text: m[2] });
+    lastIdx = re.lastIndex;
+  }
+  if (lastIdx < code.length) tokens.push({ type: 'code', text: code.slice(lastIdx) });
+
+  return tokens.map(function(tok) {
+    if (tok.type === 'comment') return '<span class="hl-comment">' + tok.text + '</span>';
+    if (tok.type === 'string') return '<span class="hl-string">' + tok.text + '</span>';
+    // Highlight keywords and numbers in code segments
+    var t = tok.text;
+    var kwRe = HL_KEYWORDS[lang];
+    if (kwRe) {
+      kwRe.lastIndex = 0;
+      t = t.replace(kwRe, '<span class="hl-keyword">$1</span>');
+    }
+    t = t.replace(/\b(\d+\.?\d*([eE][+-]?\d+)?)\b/g, '<span class="hl-number">$1</span>');
+    return t;
+  }).join('');
+}
+
 // ── Markdown renderer (vanilla JS, no external libs) ────
 function escapeHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1116,12 +1223,14 @@ function renderMarkdown(text) {
   // Code blocks: ```lang\n...\n```
   s = s.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
     var cls = lang ? ' class="language-' + lang + '"' : '';
-    return '<pre><code' + cls + '>' + code + '</code></pre>';
+    var highlighted = highlightCode(code, lang);
+    return '<pre><code' + cls + '>' + highlighted + '</code></pre>';
   });
   // Code blocks without trailing newline
   s = s.replace(/```(\w*)([\s\S]*?)```/g, function(_, lang, code) {
     var cls = lang ? ' class="language-' + lang + '"' : '';
-    return '<pre><code' + cls + '>' + code + '</code></pre>';
+    var highlighted = highlightCode(code, lang);
+    return '<pre><code' + cls + '>' + highlighted + '</code></pre>';
   });
 
   // Split by code blocks to avoid processing markdown inside them
@@ -1619,6 +1728,7 @@ function openPluginModal(existing) {
   document.getElementById("modalPluginModel").value = (existing && existing.model) || "";
   document.getElementById("modalPluginWebhook").value = (existing && existing.webhookUrl) || "";
   document.getElementById("modalPluginPoll").value = (existing && existing.pollUrl) || "";
+  document.getElementById("modalPluginSystemPrompt").value = (existing && existing.systemPrompt) || "";
   document.getElementById("modalEditOriginalName").value = (existing && existing.name) || "";
   updateModalFields();
 }
@@ -1632,6 +1742,7 @@ function updateModalFields() {
   show("modalModelField", ptype === "ollama" || ptype === "openai-compatible");
   show("modalWebhookField", ptype === "n8n");
   show("modalPollField", ptype === "n8n");
+  show("modalSystemPromptField", ptype === "ollama" || ptype === "openai-compatible");
 }
 
 document.getElementById("modalPluginType").addEventListener("change", updateModalFields);
@@ -1651,7 +1762,8 @@ function savePluginFromModal() {
     apiKey: document.getElementById("modalPluginApiKey").value.trim() || null,
     model: document.getElementById("modalPluginModel").value.trim() || null,
     webhookUrl: document.getElementById("modalPluginWebhook").value.trim() || null,
-    pollUrl: document.getElementById("modalPluginPoll").value.trim() || null
+    pollUrl: document.getElementById("modalPluginPoll").value.trim() || null,
+    systemPrompt: document.getElementById("modalPluginSystemPrompt").value.trim() || null
   };
 
   // If editing and name changed, delete the old one
@@ -2094,6 +2206,30 @@ function onVoiceTranscription(text) {
     if (wasHold && _isRecording) stopRecording();
   });
 })();
+
+// ── Clipboard Paste Image ────────────────────────────────
+document.addEventListener('paste', function(e) {
+  var items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf('image/') === 0) {
+      var blob = items[i].getAsFile();
+      if (!blob) continue;
+      var reader = new FileReader();
+      var mimeType = items[i].type;
+      reader.onload = function(ev) {
+        var base64 = ev.target.result.split(',')[1];
+        attachment = { data: base64, filename: 'clipboard.png', mimeType: mimeType };
+        document.getElementById('previewImg').src = ev.target.result;
+        document.getElementById('imagePreview').style.display = 'flex';
+        updateSend();
+      };
+      reader.readAsDataURL(blob);
+      e.preventDefault();
+      return;
+    }
+  }
+});
 
 // Init from embedded data
 var __INIT__ = "__INIT_DATA__";

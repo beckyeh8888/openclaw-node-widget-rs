@@ -489,6 +489,7 @@ mod tests {
                 "@anthropic/mcp-server-filesystem".to_string(),
                 "/home".to_string(),
             ]),
+            system_prompt: None,
         }
     }
 
@@ -643,6 +644,7 @@ mod tests {
             transport: Some("stdio".to_string()),
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let mut plugin = McpPlugin::new(&config, chat_state);
@@ -665,6 +667,7 @@ mod tests {
             transport: Some("sse".to_string()),
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let mut plugin = McpPlugin::new(&config, chat_state);

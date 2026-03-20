@@ -28,6 +28,7 @@ fn scenario_add_new_plugin() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     });
 
     assert_eq!(config.plugins.len(), 1);
@@ -54,6 +55,7 @@ fn scenario_update_existing_plugin() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     });
 
     // Update with new model
@@ -69,6 +71,7 @@ fn scenario_update_existing_plugin() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     });
 
     assert_eq!(config.plugins.len(), 1, "should not duplicate");
@@ -95,6 +98,7 @@ fn scenario_remove_plugin() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     });
     config.upsert_plugin(PluginConfig {
         plugin_type: "openai-compatible".to_string(),
@@ -108,6 +112,7 @@ fn scenario_remove_plugin() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     });
     assert_eq!(config.plugins.len(), 2);
 
@@ -136,6 +141,7 @@ fn scenario_remove_nonexistent_plugin() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     });
 
     let removed = config.remove_plugin("DoesNotExist");
@@ -162,6 +168,7 @@ fn scenario_add_n8n_plugin() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     });
 
     assert_eq!(config.plugins.len(), 1);
@@ -260,6 +267,7 @@ fn scenario_multiple_plugin_operations() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     });
     config.upsert_plugin(PluginConfig {
         plugin_type: "ollama".to_string(),
@@ -273,6 +281,7 @@ fn scenario_multiple_plugin_operations() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     });
     config.upsert_plugin(PluginConfig {
         plugin_type: "n8n".to_string(),
@@ -286,6 +295,7 @@ fn scenario_multiple_plugin_operations() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     });
 
     assert_eq!(config.plugins.len(), 3);

@@ -365,6 +365,7 @@ fn scenario_config_plugins_take_precedence() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     });
 
     let plugins = config.effective_plugins();

@@ -514,6 +514,7 @@ pub fn handle_ipc_message(
                     args: pj.get("args").and_then(|v| v.as_array()).map(|a| {
                         a.iter().filter_map(|s| s.as_str().map(String::from)).collect()
                     }),
+                    system_prompt: pj.get("systemPrompt").and_then(|v| v.as_str()).map(String::from),
                 };
                 if !pc.name.is_empty() {
                     match Config::load() {
@@ -571,8 +572,21 @@ pub fn handle_ipc_message(
             // Model setting is stored per-plugin; currently a no-op placeholder.
         }
         "setSystemPrompt" => {
-            let _prompt = msg.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
-            // System prompt is stored per-plugin; currently a no-op placeholder.
+            let prompt = msg.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let plugin_name = msg.get("pluginName").and_then(|v| v.as_str()).unwrap_or("");
+            if !plugin_name.is_empty() {
+                match Config::load() {
+                    Ok(mut config) => {
+                        if let Some(p) = config.plugins.iter_mut().find(|p| p.name == plugin_name) {
+                            p.system_prompt = if prompt.is_empty() { None } else { Some(prompt) };
+                            if let Err(e) = config.save() {
+                                warn!("failed to save system prompt: {e}");
+                            }
+                        }
+                    }
+                    Err(e) => warn!("failed to load config for setSystemPrompt: {e}"),
+                }
+            }
         }
         "setTtsAutoRead" => {
             let auto_read = msg.get("autoRead").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -781,6 +795,7 @@ fn process_inbox_to_webview(
                             "transport": p.transport,
                             "command": p.command,
                             "args": p.args,
+                            "systemPrompt": p.system_prompt,
                         })
                     })
                     .collect();

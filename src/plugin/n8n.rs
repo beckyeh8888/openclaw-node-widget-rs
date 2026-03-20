@@ -489,6 +489,7 @@ mod tests {
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = N8nPlugin::new(&config, chat_state);
@@ -516,6 +517,7 @@ mod tests {
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = N8nPlugin::new(&config, chat_state);
@@ -537,6 +539,7 @@ mod tests {
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let mut plugin = N8nPlugin::new(&config, chat_state);
@@ -567,6 +570,7 @@ mod tests {
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = N8nPlugin::new(&config, chat_state);
@@ -588,6 +592,7 @@ mod tests {
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let mut plugin = N8nPlugin::new(&config, chat_state);
@@ -610,6 +615,7 @@ mod tests {
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = N8nPlugin::new(&config, chat_state);
@@ -634,6 +640,7 @@ mod tests {
             transport: None,
             command: None,
             args: None,
+            system_prompt: None,
         };
         let chat_state = Arc::new(Mutex::new(ChatState::new()));
         let plugin = N8nPlugin::new(&config, chat_state);

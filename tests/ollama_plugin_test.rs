@@ -56,6 +56,7 @@ fn scenario_connect_validates_url_config() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let plugin = OllamaPlugin::new(&config, chat_state);
@@ -83,6 +84,7 @@ async fn scenario_connect_fails_on_unreachable_url() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let mut plugin = OllamaPlugin::new(&config, chat_state);
@@ -110,6 +112,7 @@ fn scenario_connect_fails_on_empty_url() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
     let mut plugin = OllamaPlugin::new(&config, chat_state);
@@ -137,7 +140,7 @@ fn scenario_conversation_history_maintained() {
         },
     ];
 
-    let messages = OllamaPlugin::build_messages(&history, "how are you?");
+    let messages = OllamaPlugin::build_messages(None, &history, "how are you?");
 
     assert_eq!(
         messages.len(),
@@ -170,6 +173,7 @@ fn scenario_config_parsing() {
         transport: None,
         command: None,
         args: None,
+        system_prompt: None,
     };
 
     let chat_state = Arc::new(Mutex::new(ChatState::new()));
