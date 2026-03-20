@@ -260,13 +260,20 @@ impl AgentPlugin for McpPlugin {
                         let response_text = match &transport {
                             McpTransport::Stdio { command, args } => {
                                 // Send request via stdin to child process
-                                match tokio::process::Command::new(command)
-                                    .args(args)
-                                    .stdin(std::process::Stdio::piped())
-                                    .stdout(std::process::Stdio::piped())
-                                    .stderr(std::process::Stdio::null())
-                                    .spawn()
-                                {
+                                let spawn_result = {
+                                    let mut cmd = tokio::process::Command::new(command);
+                                    cmd.args(args)
+                                        .stdin(std::process::Stdio::piped())
+                                        .stdout(std::process::Stdio::piped())
+                                        .stderr(std::process::Stdio::null());
+                                    #[cfg(windows)]
+                                    {
+                                        use std::os::windows::process::CommandExt;
+                                        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                                    }
+                                    cmd.spawn()
+                                };
+                                match spawn_result {
                                     Ok(mut child) => {
                                         // Write init + request
                                         if let Some(mut stdin) = child.stdin.take() {
@@ -487,13 +494,18 @@ impl AgentPlugin for McpPlugin {
             }
             McpTransport::Stdio { command, .. } => {
                 // For stdio, just check the command binary exists
-                let reachable = !command.is_empty()
-                    && std::process::Command::new(command)
-                        .arg("--version")
+                let reachable = !command.is_empty() && {
+                    let mut cmd = std::process::Command::new(command);
+                    cmd.arg("--version")
                         .stdout(std::process::Stdio::null())
-                        .stderr(std::process::Stdio::null())
-                        .status()
-                        .is_ok();
+                        .stderr(std::process::Stdio::null());
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::process::CommandExt;
+                        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                    }
+                    cmd.status().is_ok()
+                };
                 HealthStatus {
                     reachable,
                     latency_ms: 0,

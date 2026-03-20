@@ -735,6 +735,23 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
         return;
     };
 
+    // --- Session-key filter: only accept events matching the active session ---
+    let event_session = payload
+        .get("sessionKey")
+        .and_then(Value::as_str);
+
+    // --- Filter out cron / sub-agent senders ---
+    let sender_name = payload
+        .get("agentName")
+        .or_else(|| payload.get("agent"))
+        .or_else(|| payload.get("sender"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if sender_name == "system" || sender_name.starts_with("cron:") {
+        tracing::debug!("ignoring chat event from filtered sender: {sender_name}");
+        return;
+    }
+
     let text = payload
         .get("text")
         .or_else(|| payload.get("message"))
@@ -746,12 +763,11 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
         return;
     };
 
-    let agent_name = payload
-        .get("agentName")
-        .or_else(|| payload.get("agent"))
-        .or_else(|| payload.get("sender"))
-        .and_then(Value::as_str)
-        .map(String::from);
+    let agent_name = if sender_name.is_empty() {
+        None
+    } else {
+        Some(sender_name.to_string())
+    };
 
     let msg_id = payload
         .get("msgId")
@@ -770,6 +786,16 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
             || !done);
 
     if let Ok(mut cs) = chat_state.lock() {
+        // If the event carries a sessionKey that differs from the active session, drop it.
+        if let Some(evt_key) = event_session {
+            if evt_key != cs.active_session_key {
+                tracing::debug!(
+                    "ignoring chat event for session {evt_key} (active: {})",
+                    cs.active_session_key
+                );
+                return;
+            }
+        }
         if let Some(ref mid) = msg_id {
             if streaming && !done {
                 // Check if this is the first chunk (no pending stream or different id)
@@ -990,11 +1016,121 @@ fn frame_name(frame: &Value) -> Option<&str> {
     frame.get("event").and_then(Value::as_str)
 }
 
+/// Check whether a chat event sender should be filtered out.
+#[cfg(test)]
+fn is_filtered_sender(name: &str) -> bool {
+    name == "system" || name.starts_with("cron:")
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chat::ChatState;
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+
+    fn make_chat_state() -> Arc<Mutex<ChatState>> {
+        Arc::new(Mutex::new(ChatState::new()))
+    }
+
+    // ── Bug 1: Session-key filtering ────────────────────────────
+
+    #[test]
+    fn given_active_session_main_when_chat_event_has_matching_session_then_message_received() {
+        let cs = make_chat_state();
+        {
+            let mut s = cs.lock().unwrap();
+            s.active_session_key = "main".to_string();
+        }
+
+        let payload = json!({
+            "text": "hello",
+            "sessionKey": "main",
+            "agentName": "Bot"
+        });
+        handle_chat_event(&cs, Some(&payload));
+
+        let s = cs.lock().unwrap();
+        assert_eq!(s.inbox.len(), 1, "matching session message should be received");
+    }
+
+    #[test]
+    fn given_active_session_main_when_chat_event_has_different_session_then_message_dropped() {
+        let cs = make_chat_state();
+        {
+            let mut s = cs.lock().unwrap();
+            s.active_session_key = "main".to_string();
+        }
+
+        let payload = json!({
+            "text": "cron result",
+            "sessionKey": "cron-abc",
+            "agentName": "CronBot"
+        });
+        handle_chat_event(&cs, Some(&payload));
+
+        let s = cs.lock().unwrap();
+        assert!(s.inbox.is_empty(), "mismatched session message should be dropped");
+    }
+
+    #[test]
+    fn given_chat_event_without_session_key_then_message_accepted() {
+        let cs = make_chat_state();
+
+        let payload = json!({
+            "text": "no session key",
+            "agentName": "Bot"
+        });
+        handle_chat_event(&cs, Some(&payload));
+
+        let s = cs.lock().unwrap();
+        assert_eq!(s.inbox.len(), 1, "event without sessionKey should pass through");
+    }
+
+    #[test]
+    fn given_cron_sender_when_chat_event_arrives_then_message_filtered_out() {
+        let cs = make_chat_state();
+
+        let payload = json!({
+            "text": "cron heartbeat",
+            "agentName": "cron:daily-check"
+        });
+        handle_chat_event(&cs, Some(&payload));
+
+        let s = cs.lock().unwrap();
+        assert!(s.inbox.is_empty(), "cron sender should be filtered");
+    }
+
+    #[test]
+    fn given_system_sender_when_chat_event_arrives_then_message_filtered_out() {
+        let cs = make_chat_state();
+
+        let payload = json!({
+            "text": "system message",
+            "sender": "system"
+        });
+        handle_chat_event(&cs, Some(&payload));
+
+        let s = cs.lock().unwrap();
+        assert!(s.inbox.is_empty(), "system sender should be filtered");
+    }
+
+    #[test]
+    fn given_is_filtered_sender_then_returns_correct_values() {
+        assert!(is_filtered_sender("system"));
+        assert!(is_filtered_sender("cron:daily"));
+        assert!(is_filtered_sender("cron:"));
+        assert!(!is_filtered_sender("Bot"));
+        assert!(!is_filtered_sender(""));
+        assert!(!is_filtered_sender("my-agent"));
+    }
 }
 
 fn platform_name() -> &'static str {

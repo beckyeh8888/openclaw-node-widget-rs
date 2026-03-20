@@ -1574,6 +1574,16 @@ function streamEnd(data) {
   scrollBottom();
 }
 
+function clearChat() {
+  var c = document.getElementById("messages");
+  if (c) {
+    while (c.firstChild) c.removeChild(c.firstChild);
+  }
+  pendingStreams = {};
+  var es = document.getElementById("emptyState");
+  if (es) es.style.display = "";
+}
+
 function addMessage(m) {
   var c = document.getElementById("messages");
   var es = document.getElementById("emptyState");

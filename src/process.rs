@@ -129,8 +129,13 @@ fn stop_node_windows() -> Result<()> {
         return Ok(());
     };
 
-    let status = std::process::Command::new("taskkill")
-        .args(["/PID", &proc_info.pid.to_string(), "/F"])
+    let mut cmd = std::process::Command::new("taskkill");
+    cmd.args(["/PID", &proc_info.pid.to_string(), "/F"]);
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let status = cmd
         .status()
         .map_err(|e| AppError::Process(e.to_string()))?;
 

@@ -74,6 +74,12 @@ async fn try_local_whisper(
         cmd.arg(arg);
     }
 
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
     let output = cmd
         .output()
         .await

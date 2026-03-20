@@ -38,12 +38,17 @@ fn tailscale_cmd() -> Vec<&'static str> {
 /// Run `tailscale status --json` and return parsed JSON, or None if unavailable.
 fn run_tailscale_status_json() -> Option<Value> {
     for cmd in tailscale_cmd() {
-        let result = Command::new(cmd)
-            .args(["status", "--json"])
+        let mut c = Command::new(cmd);
+        c.args(["status", "--json"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output();
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        let result = c.output();
 
         match result {
             Ok(output) if output.status.success() => {
@@ -66,12 +71,17 @@ fn run_tailscale_status_json() -> Option<Value> {
 /// Run `tailscale status` (non-JSON) to check if Tailscale is running.
 fn run_tailscale_status_simple() -> Option<bool> {
     for cmd in tailscale_cmd() {
-        let result = Command::new(cmd)
-            .args(["status"])
+        let mut c = Command::new(cmd);
+        c.args(["status"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output();
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        let result = c.output();
 
         match result {
             Ok(output) => return Some(output.status.success()),

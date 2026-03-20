@@ -958,11 +958,17 @@ fn run_command_with_timeout(
     args: &[&str],
     timeout: Duration,
 ) -> std::result::Result<Output, String> {
-    let child = Command::new(program)
-        .args(args)
+    let mut cmd = Command::new(program);
+    cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let child = cmd
         .spawn()
         .map_err(|e| e.to_string())?;
 

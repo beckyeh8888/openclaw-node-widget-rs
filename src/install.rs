@@ -120,8 +120,13 @@ fn create_start_menu_shortcut(exe_path: &std::path::Path) -> Result<()> {
         exe_str.replace('\'', "''"),
     );
 
-    let output = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_script])
+    let mut cmd = std::process::Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_script]);
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let output = cmd
         .output()
         .map_err(|e| AppError::Process(format!("powershell failed: {e}")))?;
 
@@ -162,7 +167,12 @@ pub fn remove_install_dir() {
 #[cfg(windows)]
 pub fn launch_installed_and_exit() -> ! {
     if let Ok(exe) = windows_install_exe() {
-        let _ = std::process::Command::new(&exe).spawn();
+        let mut cmd = std::process::Command::new(&exe);
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+        let _ = cmd.spawn();
     }
     std::process::exit(0);
 }

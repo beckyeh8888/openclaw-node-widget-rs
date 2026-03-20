@@ -464,14 +464,17 @@ impl Config {
 /// Check whether Node.js (npm) is available on this system.
 pub fn detect_nodejs() -> bool {
     use std::process::{Command, Stdio};
-    Command::new("node")
-        .arg("--version")
+    let mut cmd = Command::new("node");
+    cmd.arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
 pub fn app_dir() -> Result<PathBuf> {

@@ -207,7 +207,13 @@ pub fn apply_update(info: &UpdateInfo) -> Result<(), String> {
     tracing::info!("update applied, restarting...");
 
     // Restart: spawn new process and exit
-    let _ = std::process::Command::new(&current_exe).spawn();
+    let mut cmd = std::process::Command::new(&current_exe);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let _ = cmd.spawn();
     std::process::exit(0);
 }
 
@@ -427,7 +433,13 @@ async fn download_and_install_windows(tag: &str) -> Result<(), String> {
 
     // Auto-restart: spawn the installed exe and exit current process
     tracing::info!("auto-restarting widget from install path...");
-    let _ = std::process::Command::new(&install_exe).spawn();
+    let mut cmd = std::process::Command::new(&install_exe);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let _ = cmd.spawn();
     std::process::exit(0);
 }
 

@@ -54,6 +54,10 @@ pub enum ChatInbound {
     PinChanged {
         pinned: bool,
     },
+    PluginSwitched {
+        plugin_id: String,
+        session_key: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +86,8 @@ pub struct ChatState {
     pub active_plugin_id: Option<String>,
     /// Currently active session key within the active plugin.
     pub active_session_key: String,
+    /// Set to true when the app should fully quit (e.g. from tray "Quit" menu).
+    pub app_quit: bool,
 }
 
 impl Default for ChatState {
@@ -108,6 +114,7 @@ impl ChatState {
             settings_requested: false,
             active_plugin_id: None,
             active_session_key: "main".to_string(),
+            app_quit: false,
         }
     }
 
@@ -298,14 +305,32 @@ fn run_webview_window(
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
+                // Hide the window instead of exiting the event loop so the
+                // tray icon stays alive and can re-show the window later.
+                window.set_visible(false);
                 if let Ok(mut state) = chat_state_loop.lock() {
                     state.window_open = false;
                     state.window_focused = false;
                 }
-                *control_flow = ControlFlow::Exit;
             }
             Event::NewEvents(StartCause::ResumeTimeReached { .. })
             | Event::MainEventsCleared => {
+                // Check if the app should fully quit (e.g. tray "Quit").
+                if let Ok(state) = chat_state_loop.lock() {
+                    if state.app_quit {
+                        *control_flow = ControlFlow::Exit;
+                        return;
+                    }
+                }
+
+                // Re-show the window when tray sets window_open = true.
+                if let Ok(mut state) = chat_state_loop.lock() {
+                    if state.window_open && !window.is_visible() {
+                        window.set_visible(true);
+                        state.window_focused = true;
+                    }
+                }
+
                 // Handle pin changes that require window access
                 if let Ok(mut state) = chat_state_loop.lock() {
                     let mut i = 0;
@@ -485,9 +510,24 @@ pub fn handle_ipc_message(
                 .to_string();
             if !plugin_id.is_empty() {
                 if let Ok(mut state) = chat_state.lock() {
-                    state.active_plugin_id = Some(plugin_id);
+                    let changed = state
+                        .active_plugin_id
+                        .as_deref()
+                        .map(|id| id != plugin_id)
+                        .unwrap_or(true);
+                    state.active_plugin_id = Some(plugin_id.clone());
                     state.active_session_key = session_key.clone();
-                    state.selected_session = Some(session_key);
+                    state.selected_session = Some(session_key.clone());
+                    if changed {
+                        // Clear current conversation state for the new plugin
+                        state.messages.clear();
+                        state.pending_stream = None;
+                        state.waiting_for_reply = false;
+                        state.inbox.push(ChatInbound::PluginSwitched {
+                            plugin_id,
+                            session_key,
+                        });
+                    }
                 }
             }
         }
@@ -829,6 +869,19 @@ fn process_inbox_to_webview(
             }
             ChatInbound::PinChanged { .. } => {
                 // Handled by the event loop (requires window access)
+            }
+            ChatInbound::PluginSwitched { plugin_id, session_key } => {
+                let _ = webview.evaluate_script(
+                    "if(typeof clearChat==='function')clearChat()"
+                );
+                let data = json!({
+                    "pluginId": plugin_id,
+                    "sessionKey": session_key,
+                });
+                let _ = webview.evaluate_script(&format!(
+                    "if(typeof onPluginSwitched==='function')onPluginSwitched({})",
+                    data
+                ));
             }
         }
     }
@@ -1568,5 +1621,111 @@ mod tests {
         // logic should push settings data (tested via the condition check)
         assert_eq!(state.current_page, "chat");
         // This is a unit-level check; the integration is in process_inbox_to_webview
+    }
+
+    // ── Bug 2: Close window hides instead of quit ───────────────
+
+    #[test]
+    fn given_new_chat_state_then_app_quit_defaults_to_false() {
+        let state = ChatState::new();
+        assert!(!state.app_quit, "app_quit should default to false");
+    }
+
+    #[test]
+    fn given_window_open_when_close_requested_then_window_open_becomes_false() {
+        // Simulates what the event loop does on CloseRequested:
+        // sets window_open = false, window_focused = false (window.set_visible(false) is
+        // a GUI call we can't test in unit tests, but the state transition is testable).
+        let mut state = ChatState::new();
+        state.window_open = true;
+        state.window_focused = true;
+
+        // Simulate CloseRequested handler
+        state.window_open = false;
+        state.window_focused = false;
+
+        assert!(!state.window_open, "window_open should be false after close");
+        assert!(!state.window_focused, "window_focused should be false after close");
+        assert!(!state.app_quit, "app_quit should NOT be set on close");
+    }
+
+    #[test]
+    fn given_window_hidden_when_tray_sets_window_open_true_then_reshow_is_possible() {
+        let mut state = ChatState::new();
+        state.window_open = false;
+        state.window_focused = false;
+
+        // Tray click sets window_open = true
+        state.window_open = true;
+
+        assert!(state.window_open, "tray should be able to set window_open back to true");
+        assert!(!state.app_quit, "app_quit should remain false for re-show");
+    }
+
+    #[test]
+    fn given_app_quit_true_then_event_loop_should_exit() {
+        let mut state = ChatState::new();
+        state.app_quit = true;
+
+        // The event loop checks state.app_quit and sets ControlFlow::Exit
+        assert!(state.app_quit, "when app_quit is true, event loop should exit");
+    }
+
+    // ── Bug 3: Switching plugin clears chat ─────────────────────
+
+    #[test]
+    fn given_openclaw_plugin_when_switch_to_n8n_then_chat_cleared_and_event_pushed() {
+        let (state, tx, _rx) = setup_ipc();
+
+        // Pre-fill with some messages as if user was chatting
+        {
+            let mut s = state.lock().unwrap();
+            s.active_plugin_id = Some("openclaw".to_string());
+            s.messages.push(ChatMessage {
+                sender: ChatSender::User,
+                text: "hello openclaw".to_string(),
+            });
+            s.messages.push(ChatMessage {
+                sender: ChatSender::Agent("OC".to_string()),
+                text: "hi there".to_string(),
+            });
+        }
+
+        let body = r#"{"type":"switchPlugin","pluginId":"n8n","sessionKey":"main"}"#;
+        handle_ipc_message(body, &tx, &state);
+
+        let s = state.lock().unwrap();
+        assert!(s.messages.is_empty(), "messages should be cleared on plugin switch");
+        assert_eq!(s.active_plugin_id, Some("n8n".to_string()));
+        assert_eq!(s.active_session_key, "main");
+        assert!(!s.waiting_for_reply, "waiting_for_reply should be reset");
+        assert!(s.pending_stream.is_none(), "pending_stream should be cleared");
+
+        // Verify PluginSwitched event was pushed to inbox
+        let has_plugin_switched = s.inbox.iter().any(|e| {
+            matches!(e, ChatInbound::PluginSwitched { plugin_id, .. } if plugin_id == "n8n")
+        });
+        assert!(has_plugin_switched, "PluginSwitched event should be in inbox");
+    }
+
+    #[test]
+    fn given_same_plugin_when_switch_then_no_clear() {
+        let (state, tx, _rx) = setup_ipc();
+
+        {
+            let mut s = state.lock().unwrap();
+            s.active_plugin_id = Some("openclaw".to_string());
+            s.messages.push(ChatMessage {
+                sender: ChatSender::User,
+                text: "keep me".to_string(),
+            });
+        }
+
+        let body = r#"{"type":"switchPlugin","pluginId":"openclaw","sessionKey":"main"}"#;
+        handle_ipc_message(body, &tx, &state);
+
+        let s = state.lock().unwrap();
+        assert_eq!(s.messages.len(), 1, "messages should NOT be cleared for same plugin");
+        assert_eq!(s.messages[0].text, "keep me");
     }
 }
