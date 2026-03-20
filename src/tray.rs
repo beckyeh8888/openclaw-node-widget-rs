@@ -290,6 +290,12 @@ impl TrayState {
         })
     }
 
+    /// Returns the MenuId for the "Chat" tray menu item.
+    /// Pass this to the webview event loop so it can handle re-show directly.
+    pub fn chat_menu_id(&self) -> &tray_icon::menu::MenuId {
+        &self.chat_id
+    }
+
     pub fn update_status(
         &mut self,
         status: NodeStatus,

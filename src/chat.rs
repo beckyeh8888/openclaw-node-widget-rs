@@ -235,13 +235,18 @@ pub fn run_chat_window(
     // Build a single-entry sender map keyed by "default"
     let mut senders = HashMap::new();
     senders.insert("default".to_string(), plugin_tx);
-    run_chat_window_plugin(chat_state, senders)
+    run_chat_window_plugin(chat_state, senders, None)
 }
 
 /// Open the chat window routing commands through the plugin system.
+///
+/// `chat_menu_id` is the tray menu item ID for "Chat". When provided, the
+/// webview event loop polls `MenuEvent::receiver()` directly so that tray
+/// re-open requests work even while this function is blocking the main thread.
 pub fn run_chat_window_plugin(
     chat_state: Arc<Mutex<ChatState>>,
     cmd_senders: HashMap<String, mpsc::UnboundedSender<PluginCommand>>,
+    chat_menu_id: Option<tray_icon::menu::MenuId>,
 ) -> crate::error::Result<()> {
     if let Ok(state) = chat_state.lock() {
         if state.window_open {
@@ -264,7 +269,7 @@ pub fn run_chat_window_plugin(
     let html_template = include_str!("chat_ui.html");
     let html = html_template.replace("\"__INIT_DATA__\"", &init_json);
 
-    let result = run_webview_window(html, chat_state.clone(), cmd_senders);
+    let result = run_webview_window(html, chat_state.clone(), cmd_senders, chat_menu_id);
 
     // Ensure cleanup on exit
     if let Ok(mut state) = chat_state.lock() {
@@ -299,6 +304,7 @@ fn run_webview_window(
     html: String,
     chat_state: Arc<Mutex<ChatState>>,
     cmd_senders: HashMap<String, mpsc::UnboundedSender<PluginCommand>>,
+    chat_menu_id: Option<tray_icon::menu::MenuId>,
 ) -> crate::error::Result<()> {
     use tao::dpi::LogicalSize;
     use tao::event::{Event, StartCause, WindowEvent};
@@ -357,6 +363,19 @@ fn run_webview_window(
                     if state.app_quit {
                         *control_flow = ControlFlow::Exit;
                         return;
+                    }
+                }
+
+                // Poll tray menu events directly (works even when main loop
+                // is blocked by this event loop). If the Chat menu item is
+                // clicked, set window_open so the window re-appears.
+                if let Some(ref mid) = chat_menu_id {
+                    while let Ok(evt) = tray_icon::menu::MenuEvent::receiver().try_recv() {
+                        if &evt.id == mid {
+                            if let Ok(mut state) = chat_state_loop.lock() {
+                                state.window_open = true;
+                            }
+                        }
                     }
                 }
 
