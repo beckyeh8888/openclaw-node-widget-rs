@@ -50,6 +50,9 @@ pub enum ChatInbound {
     VoiceTranscription {
         text: String,
     },
+    PinChanged {
+        pinned: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -254,10 +257,13 @@ fn run_webview_window(
 
     let event_loop = EventLoopBuilder::new().build();
 
+    let always_on_top = Config::load().map(|c| c.widget.always_on_top).unwrap_or(false);
+
     let window = WindowBuilder::new()
         .with_title("\u{1f916} OpenClaw Chat")
         .with_inner_size(LogicalSize::new(420.0, 620.0))
         .with_min_inner_size(LogicalSize::new(380.0, 400.0))
+        .with_always_on_top(always_on_top)
         .build(&event_loop)
         .map_err(|e| crate::error::AppError::Tray(format!("chat window: {e}")))?;
 
@@ -293,6 +299,18 @@ fn run_webview_window(
             }
             Event::NewEvents(StartCause::ResumeTimeReached { .. })
             | Event::MainEventsCleared => {
+                // Handle pin changes that require window access
+                if let Ok(mut state) = chat_state_loop.lock() {
+                    let mut i = 0;
+                    while i < state.inbox.len() {
+                        if let ChatInbound::PinChanged { pinned } = &state.inbox[i] {
+                            window.set_always_on_top(*pinned);
+                            state.inbox.remove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
                 process_inbox_to_webview(&chat_state_loop, &webview);
             }
             _ => {}
@@ -340,7 +358,8 @@ fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
         })
         .collect();
 
-    let tts_config = Config::load().map(|c| c.tts).unwrap_or_default();
+    let config = Config::load().unwrap_or_default();
+    let tts_config = config.tts.clone();
 
     json!({
         "lang": lang,
@@ -354,6 +373,8 @@ fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
         "currentPage": state.current_page,
         "activePluginId": state.active_plugin_id,
         "activeSessionKey": state.active_session_key,
+        "theme": config.widget.theme,
+        "alwaysOnTop": config.widget.always_on_top,
         "tts": {
             "enabled": tts_config.enabled,
             "auto_read": tts_config.auto_read,
@@ -600,10 +621,40 @@ pub fn handle_ipc_message(
                 Err(e) => warn!("failed to load config for setTtsAutoRead: {e}"),
             }
         }
+        "setTheme" => {
+            let theme = msg.get("theme").and_then(|v| v.as_str()).unwrap_or("auto").to_string();
+            match Config::load() {
+                Ok(mut config) => {
+                    config.widget.theme = theme;
+                    if let Err(e) = config.save() {
+                        warn!("failed to save theme config: {e}");
+                    }
+                }
+                Err(e) => warn!("failed to load config for setTheme: {e}"),
+            }
+        }
+        "pin" => {
+            let pinned = msg.get("pinned").and_then(|v| v.as_bool()).unwrap_or(false);
+            match Config::load() {
+                Ok(mut config) => {
+                    config.widget.always_on_top = pinned;
+                    if let Err(e) = config.save() {
+                        warn!("failed to save pin config: {e}");
+                    }
+                }
+                Err(e) => warn!("failed to load config for pin: {e}"),
+            }
+            // The actual window.set_always_on_top is handled by the event loop
+            if let Ok(mut state) = chat_state.lock() {
+                state.inbox.push(ChatInbound::PinChanged { pinned });
+            }
+        }
         "saveGeneral" => {
             let general = GeneralSettings {
                 language: msg.get("language").and_then(|v| v.as_str()).unwrap_or("auto").to_string(),
                 auto_start: msg.get("autoStart").and_then(|v| v.as_bool()).unwrap_or(false),
+                theme: msg.get("theme").and_then(|v| v.as_str()).unwrap_or("auto").to_string(),
+                always_on_top: msg.get("alwaysOnTop").and_then(|v| v.as_bool()).unwrap_or(false),
             };
             match Config::load() {
                 Ok(mut config) => {
@@ -761,6 +812,9 @@ fn process_inbox_to_webview(
                     escaped
                 ));
             }
+            ChatInbound::PinChanged { .. } => {
+                // Handled by the event loop (requires window access)
+            }
         }
     }
 
@@ -804,6 +858,7 @@ fn process_inbox_to_webview(
                     "general": {
                         "language": config.widget.language,
                         "autoStart": config.startup.auto_start,
+                        "theme": config.widget.theme,
                     }
                 });
                 let _ = webview.evaluate_script(&format!(

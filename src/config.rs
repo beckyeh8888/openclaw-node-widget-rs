@@ -111,6 +111,10 @@ pub struct WidgetConfig {
     pub notifications: bool,
     pub notification_sound: bool,
     pub language: String,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    #[serde(default)]
+    pub always_on_top: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,6 +168,14 @@ impl Default for TtsConfig {
 pub struct GeneralSettings {
     pub language: String,
     pub auto_start: bool,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    #[serde(default)]
+    pub always_on_top: bool,
+}
+
+fn default_theme() -> String {
+    "auto".to_string()
 }
 
 impl Default for Config {
@@ -215,6 +227,8 @@ impl Default for WidgetConfig {
             notifications: true,
             notification_sound: true,
             language: "auto".to_string(),
+            theme: "auto".to_string(),
+            always_on_top: false,
         }
     }
 }
@@ -429,6 +443,8 @@ impl Config {
     pub fn apply_general_settings(&mut self, general: &GeneralSettings) {
         self.widget.language = general.language.clone();
         self.startup.auto_start = general.auto_start;
+        self.widget.theme = general.theme.clone();
+        self.widget.always_on_top = general.always_on_top;
     }
 
     pub fn save(&self) -> Result<()> {
