@@ -69,6 +69,7 @@ pub enum PluginEvent {
     Connected(PluginId),
     Disconnected(PluginId, String),
     MessageReceived(PluginId, ChatMessage),
+    StreamChunk { plugin_id: PluginId, text: String },
     StatusChanged(PluginId, ConnectionStatus),
     Error(PluginId, String),
 }

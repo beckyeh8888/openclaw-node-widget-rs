@@ -226,10 +226,10 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                 plugin_registry.register(Box::new(p));
             }
             "ollama" => {
-                plugin_registry.register(Box::new(plugin::ollama::OllamaPlugin::new(plugin_cfg)));
+                plugin_registry.register(Box::new(plugin::ollama::OllamaPlugin::new(plugin_cfg, Arc::clone(&chat_state))));
             }
             "openai-compatible" => {
-                plugin_registry.register(Box::new(plugin::openai_compat::OpenAICompatPlugin::new(plugin_cfg)));
+                plugin_registry.register(Box::new(plugin::openai_compat::OpenAICompatPlugin::new(plugin_cfg, Arc::clone(&chat_state))));
             }
             other => {
                 tracing::warn!(plugin_type = other, "unknown plugin type — skipping");
