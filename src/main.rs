@@ -681,10 +681,7 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                         chat::run_chat_window_plugin(
                             Arc::clone(&chat_state),
                             senders,
-                            chat::TrayMenuIds {
-                                chat: Some(tray.chat_menu_id().clone()),
-                                exit: Some(tray.exit_menu_id().clone()),
-                            },
+                            Some(tray.chat_menu_id().clone()),
                         )?;
                     } else if let Some(ref cmd_tx) = gateway_cmd_tx {
                         chat::run_chat_window(
