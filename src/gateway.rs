@@ -752,19 +752,6 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
         return;
     }
 
-    // DEBUG: dump chat event payload to file
-    {
-        let line = format!("[{}] state={} msgId={:?} done={} keys={:?}\n",
-            chrono::Local::now().format("%H:%M:%S"),
-            payload.get("state").and_then(Value::as_str).unwrap_or("-"),
-            payload.get("msgId").or_else(|| payload.get("id")).and_then(Value::as_str),
-            payload.get("done").and_then(Value::as_bool).unwrap_or(false),
-            payload.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()
-        );
-        let _ = std::fs::OpenOptions::new().create(true).append(true).open("widget-chat-debug.log")
-            .map(|mut f| { use std::io::Write; let _ = f.write_all(line.as_bytes()); });
-    }
-
     // Extract text from various Gateway chat event formats:
     // 1. payload.text (simple)
     // 2. payload.message (string)
@@ -845,26 +832,30 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
         Some(sender_name.to_string())
     };
 
+    // Gateway uses `runId` (not `msgId`) to identify a reply sequence.
     let msg_id = payload
         .get("msgId")
+        .or_else(|| payload.get("runId"))
         .or_else(|| payload.get("id"))
         .and_then(Value::as_str)
         .map(String::from);
 
+    // Gateway uses `state: "final"` instead of `done: true`.
+    let state = payload.get("state").and_then(Value::as_str).unwrap_or("");
     let done = payload
         .get("done")
         .and_then(Value::as_bool)
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || state == "final"
+        || state == "done";
 
-    // Better streaming detection: use `state` field from Gateway
-    // ("delta" / "running" means streaming in progress, "done" means finished).
-    let state = payload.get("state").and_then(Value::as_str).unwrap_or("");
+    // Streaming detection: any event with a msg_id that isn't final is streaming.
     let streaming = msg_id.is_some()
-        && (payload.get("streaming").and_then(Value::as_bool).unwrap_or(false)
-            || payload.get("delta").is_some()
-            || state == "delta"
+        && (state == "delta"
             || state == "running"
-            || !done);
+            || payload.get("streaming").and_then(Value::as_bool).unwrap_or(false)
+            || payload.get("delta").is_some()
+            || (!done && !state.is_empty()));
 
     if let Ok(mut cs) = chat_state.lock() {
         // Session filter: drop events from sub-agent / isolated sessions only.
