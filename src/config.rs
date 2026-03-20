@@ -20,6 +20,7 @@ pub struct Config {
     pub plugins: Vec<PluginConfig>,
     #[serde(default)]
     pub voice: VoiceConfig,
+    pub tts: TtsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +136,26 @@ pub struct LogConfig {
     pub syslog: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TtsConfig {
+    pub enabled: bool,
+    pub auto_read: bool,
+    pub voice: String,
+    pub rate: f32,
+}
+
+impl Default for TtsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_read: false,
+            voice: "auto".to_string(),
+            rate: 1.0,
+        }
+    }
+}
+
 /// Subset of settings exposed via the Settings UI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralSettings {
@@ -154,6 +175,7 @@ impl Default for Config {
             connections: Vec::new(),
             plugins: Vec::new(),
             voice: VoiceConfig::default(),
+            tts: TtsConfig::default(),
         }
     }
 }

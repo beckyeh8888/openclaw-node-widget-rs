@@ -340,6 +340,8 @@ fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
         })
         .collect();
 
+    let tts_config = Config::load().map(|c| c.tts).unwrap_or_default();
+
     json!({
         "lang": lang,
         "connected": state.connected,
@@ -352,6 +354,12 @@ fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
         "currentPage": state.current_page,
         "activePluginId": state.active_plugin_id,
         "activeSessionKey": state.active_session_key,
+        "tts": {
+            "enabled": tts_config.enabled,
+            "auto_read": tts_config.auto_read,
+            "voice": tts_config.voice,
+            "rate": tts_config.rate,
+        },
     })
     .to_string()
 }
@@ -532,6 +540,50 @@ pub fn handle_ipc_message(
                     }
                     Err(e) => warn!("failed to load config for deletePlugin: {e}"),
                 }
+            }
+        }
+        "clearConversation" => {
+            if let Ok(mut state) = chat_state.lock() {
+                state.messages.clear();
+                state.pending_stream = None;
+                state.waiting_for_reply = false;
+            }
+        }
+        "export" => {
+            let format = msg.get("format").and_then(|v| v.as_str()).unwrap_or("markdown");
+            let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            if !content.is_empty() {
+                let ext = if format == "markdown" { "md" } else { "txt" };
+                let filename = format!(
+                    "chat-export-{}.{}",
+                    chrono::Local::now().format("%Y%m%d-%H%M%S"),
+                    ext
+                );
+                let downloads = dirs::download_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+                let path = downloads.join(&filename);
+                if let Err(e) = std::fs::write(&path, content) {
+                    warn!("failed to export chat: {e}");
+                }
+            }
+        }
+        "setModel" => {
+            let _model = msg.get("model").and_then(|v| v.as_str()).unwrap_or("");
+            // Model setting is stored per-plugin; currently a no-op placeholder.
+        }
+        "setSystemPrompt" => {
+            let _prompt = msg.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+            // System prompt is stored per-plugin; currently a no-op placeholder.
+        }
+        "setTtsAutoRead" => {
+            let auto_read = msg.get("autoRead").and_then(|v| v.as_bool()).unwrap_or(false);
+            match Config::load() {
+                Ok(mut config) => {
+                    config.tts.auto_read = auto_read;
+                    if let Err(e) = config.save() {
+                        warn!("failed to save TTS config: {e}");
+                    }
+                }
+                Err(e) => warn!("failed to load config for setTtsAutoRead: {e}"),
             }
         }
         "saveGeneral" => {
