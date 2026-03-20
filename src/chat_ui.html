@@ -159,6 +159,50 @@ body {
   margin-bottom: 4px;
   cursor: pointer;
 }
+.msg.agent .bubble { white-space: normal; }
+.msg.agent .bubble pre {
+  background: #0d0d1a;
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  margin: 6px 0;
+}
+.msg.agent .bubble code {
+  background: rgba(255,255,255,0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 13px;
+}
+.msg.agent .bubble pre code {
+  background: none;
+  padding: 0;
+}
+.msg.agent .bubble a {
+  color: #7eb8ff;
+  text-decoration: underline;
+}
+.msg.agent .bubble ul, .msg.agent .bubble ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.msg.agent .bubble li {
+  margin: 2px 0;
+}
+.msg.agent .bubble p {
+  margin: 4px 0;
+}
+.streaming-cursor::after {
+  content: '\25CA';
+  animation: blink 0.8s infinite;
+}
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
 .ts {
   font-size: 10px;
   color: #666;
@@ -631,6 +675,128 @@ function scrollBottom() {
   requestAnimationFrame(function() { c.scrollTop = c.scrollHeight; });
 }
 
+// ── Markdown renderer (vanilla JS, no external libs) ────
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function renderMarkdown(text) {
+  // Escape HTML first to prevent XSS
+  var s = escapeHtml(text);
+
+  // Code blocks: ```lang\n...\n```
+  s = s.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
+    var cls = lang ? ' class="language-' + lang + '"' : '';
+    return '<pre><code' + cls + '>' + code + '</code></pre>';
+  });
+  // Code blocks without trailing newline
+  s = s.replace(/```(\w*)([\s\S]*?)```/g, function(_, lang, code) {
+    var cls = lang ? ' class="language-' + lang + '"' : '';
+    return '<pre><code' + cls + '>' + code + '</code></pre>';
+  });
+
+  // Split by code blocks to avoid processing markdown inside them
+  var parts = s.split(/(<pre><code[^>]*>[\s\S]*?<\/code><\/pre>)/g);
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i].indexOf('<pre><code') === 0) continue;
+    var p = parts[i];
+
+    // Inline code
+    p = p.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Bold
+    p = p.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    p = p.replace(/__(.+?)__/g, '<strong>$1</strong>');
+    // Italic
+    p = p.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    p = p.replace(/_(.+?)_/g, '<em>$1</em>');
+    // Links
+    p = p.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    // Headings (render as bold, not actual headings — too big in chat)
+    p = p.replace(/^### (.+)$/gm, '<strong>$1</strong>');
+    p = p.replace(/^## (.+)$/gm, '<strong>$1</strong>');
+    p = p.replace(/^# (.+)$/gm, '<strong>$1</strong>');
+    // Unordered lists
+    p = p.replace(/(?:^|\n)((?:[-*] .+\n?)+)/g, function(_, block) {
+      var items = block.trim().split('\n').map(function(line) {
+        return '<li>' + line.replace(/^[-*] /, '') + '</li>';
+      }).join('');
+      return '<ul>' + items + '</ul>';
+    });
+    // Ordered lists
+    p = p.replace(/(?:^|\n)((?:\d+\. .+\n?)+)/g, function(_, block) {
+      var items = block.trim().split('\n').map(function(line) {
+        return '<li>' + line.replace(/^\d+\. /, '') + '</li>';
+      }).join('');
+      return '<ol>' + items + '</ol>';
+    });
+    // Paragraphs (double newline)
+    p = p.replace(/\n\n+/g, '</p><p>');
+    // Single newlines to <br>
+    p = p.replace(/\n/g, '<br>');
+
+    parts[i] = p;
+  }
+  return '<p>' + parts.join('') + '</p>';
+}
+
+// ── Streaming state ─────────────────────────────────────
+var pendingStreams = {};
+
+function streamStart(data) {
+  var c = document.getElementById("messages");
+  var es = document.getElementById("emptyState");
+  if (es) es.style.display = "none";
+
+  var w = document.createElement("div");
+  w.className = "msg agent";
+  w.id = "stream-" + data.id;
+
+  if (data.agentName) {
+    var n = document.createElement("div");
+    n.className = "agent-name";
+    n.textContent = data.agentName;
+    w.appendChild(n);
+  }
+
+  var b = document.createElement("div");
+  b.className = "bubble streaming-cursor";
+  b.setAttribute("data-raw", "");
+  w.appendChild(b);
+
+  c.appendChild(w);
+  pendingStreams[data.id] = { el: w, raw: "" };
+  scrollBottom();
+}
+
+function streamChunk(data) {
+  var ps = pendingStreams[data.id];
+  if (!ps) return;
+  ps.raw += data.text;
+  var b = ps.el.querySelector(".bubble");
+  if (b) {
+    b.setAttribute("data-raw", ps.raw);
+    b.textContent = ps.raw;
+  }
+  scrollBottom();
+}
+
+function streamEnd(data) {
+  var ps = pendingStreams[data.id];
+  if (!ps) return;
+  var b = ps.el.querySelector(".bubble");
+  if (b) {
+    b.classList.remove("streaming-cursor");
+    b.innerHTML = renderMarkdown(ps.raw);
+  }
+  // Add timestamp
+  var ts = document.createElement("div");
+  ts.className = "ts";
+  ts.textContent = fmtTime(new Date());
+  ps.el.appendChild(ts);
+  delete pendingStreams[data.id];
+  scrollBottom();
+}
+
 function addMessage(m) {
   var c = document.getElementById("messages");
   var es = document.getElementById("emptyState");
@@ -655,9 +821,13 @@ function addMessage(m) {
     b.appendChild(img);
   }
   if (m.text) {
-    var txt = document.createElement("span");
-    txt.textContent = m.text;
-    b.appendChild(txt);
+    if (m.sender === "agent") {
+      b.innerHTML += renderMarkdown(m.text);
+    } else {
+      var txt = document.createElement("span");
+      txt.textContent = m.text;
+      b.appendChild(txt);
+    }
   }
   w.appendChild(b);
 

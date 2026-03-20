@@ -9,6 +9,7 @@ mod error;
 mod gateway;
 mod i18n;
 mod install;
+mod markdown;
 mod lock;
 mod monitor;
 pub mod plugin;
