@@ -86,6 +86,27 @@ body {
   max-width: 160px;
 }
 #sessionSelect option { background: #2d2d44; }
+.session-tabs {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  max-width: 200px;
+  flex-shrink: 1;
+}
+.session-tabs::-webkit-scrollbar { height: 0; }
+.session-tab {
+  padding: 2px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  background: #2d2d44;
+  color: #aaa;
+  border: 1px solid transparent;
+  transition: background 0.15s, color 0.15s;
+}
+.session-tab:hover { color: #fff; background: #3d3d5c; }
+.session-tab.active { color: #fff; background: #0084ff; }
 #connectionStatus {
   margin-left: auto;
   font-size: 11px;
@@ -520,7 +541,9 @@ body {
   <div id="page-chat" class="page active">
     <div id="header">
       <span class="header-title">🤖 <span id="headerChat">Chat</span></span>
-      <select id="sessionSelect"><option value="">main</option></select>
+      <select id="pluginSelect" style="display:none;background:#2d2d44;color:#fff;border:1px solid #3d3d5c;border-radius:8px;padding:3px 8px;font-size:13px;outline:none;cursor:pointer;max-width:120px;"></select>
+      <div id="sessionTabs" class="session-tabs"></div>
+      <select id="sessionSelect" style="display:none;"><option value="">main</option></select>
       <span id="connectionStatus" class="status-disconnected">Not connected</span>
     </div>
 
@@ -867,6 +890,52 @@ function setSessions(list) {
     sel.appendChild(o);
   }
   if (cur) sel.value = cur;
+  // Also update session tabs
+  updateSessionTabs(list, cur || "main");
+}
+
+var activeSessionKey = "main";
+
+function updateSessionTabs(sessions, selected) {
+  var container = document.getElementById("sessionTabs");
+  container.innerHTML = "";
+  var keys = sessions && sessions.length ? sessions : [{ key: "main", name: "main" }];
+  for (var i = 0; i < keys.length; i++) {
+    var tab = document.createElement("span");
+    tab.className = "session-tab" + (keys[i].key === selected ? " active" : "");
+    tab.textContent = keys[i].name;
+    tab.setAttribute("data-key", keys[i].key);
+    tab.addEventListener("click", (function(key) {
+      return function() { switchSession(key); };
+    })(keys[i].key));
+    container.appendChild(tab);
+  }
+  activeSessionKey = selected;
+}
+
+function switchSession(key) {
+  activeSessionKey = key;
+  // Update tab UI
+  var tabs = document.querySelectorAll(".session-tab");
+  for (var i = 0; i < tabs.length; i++) {
+    tabs[i].classList.toggle("active", tabs[i].getAttribute("data-key") === key);
+  }
+  // Also sync hidden select
+  document.getElementById("sessionSelect").value = key;
+  // Tell Rust to switch session
+  var pluginId = document.getElementById("pluginSelect").value || "";
+  window.ipc.postMessage(JSON.stringify({
+    type: "switchPlugin", pluginId: pluginId, sessionKey: key
+  }));
+}
+
+function loadHistory(data) {
+  var c = document.getElementById("messages");
+  c.innerHTML = '<div class="empty-state" id="emptyState">' + t("chat_empty") + '</div>';
+  if (data.messages && data.messages.length) {
+    document.getElementById("emptyState").style.display = "none";
+    for (var i = 0; i < data.messages.length; i++) addMessage(data.messages[i]);
+  }
 }
 
 function setTyping(v) {
@@ -1084,13 +1153,18 @@ function init(data) {
   setConnected(connected);
   if (data.sessions && data.sessions.length) setSessions(data.sessions);
   if (data.selectedSession) document.getElementById("sessionSelect").value = data.selectedSession;
+  if (data.activeSessionKey) activeSessionKey = data.activeSessionKey;
   if (data.messages && data.messages.length) {
+    document.getElementById("emptyState").style.display = "none";
     for (var i = 0; i < data.messages.length; i++) addMessage(data.messages[i]);
   }
   if (data.waitingForReply) setTyping(true);
   if (data.dashboard) updateDashboard(data.dashboard);
   if (data.logs && data.logs.length) updateLogs(data.logs);
   if (data.currentPage && data.currentPage !== "chat") navigateTo(data.currentPage);
+  // Init session tabs with whatever sessions we have
+  var sessionsForTabs = data.sessions && data.sessions.length ? data.sessions : [{ key: "main", name: "main" }];
+  updateSessionTabs(sessionsForTabs, data.activeSessionKey || "main");
 }
 
 // Chat events
