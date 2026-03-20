@@ -919,6 +919,18 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
                 );
                 return;
             }
+
+            // DEBUG: log accepted events
+            {
+                let payload_str = serde_json::to_string(payload).unwrap_or_default();
+                let truncated: String = payload_str.chars().take(400).collect();
+                let line = format!("[{}] ACCEPTED evt_key={} active={} payload={}\n",
+                    chrono::Local::now().format("%H:%M:%S"),
+                    evt_key, active_key, truncated);
+                let _ = std::fs::OpenOptions::new().create(true).append(true)
+                    .open("widget-filter-debug.log")
+                    .and_then(|mut f| { use std::io::Write; f.write_all(line.as_bytes()) });
+            }
         }
         if let Some(ref mid) = msg_id {
             if streaming && !done {
