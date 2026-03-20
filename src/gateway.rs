@@ -540,7 +540,7 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
         "id": subscribe_id,
         "method": "events.subscribe",
         "params": {
-            "types": ["session.start", "session.end", "agent.error"]
+            "types": ["session.start", "session.end", "agent.error", "chat"]
         }
     });
     info!("sending events.subscribe request (best-effort)");
