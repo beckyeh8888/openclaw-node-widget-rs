@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::{
-    AgentPlugin, ConnectionStatus, PluginCapabilities, PluginCommand, PluginError, PluginEvent,
-    PluginId,
+    AgentPlugin, ConnectionStatus, HealthStatus, PluginCapabilities, PluginCommand, PluginError,
+    PluginEvent, PluginId, TokenUsage,
 };
 use crate::chat::{ChatInbound, ChatMessage, ChatSender, ChatState};
 use crate::config::PluginConfig;
@@ -32,6 +32,14 @@ pub struct OllamaStreamLine {
     pub message: Option<OllamaMessageContent>,
     #[serde(default)]
     pub done: bool,
+    #[serde(default)]
+    pub eval_count: Option<u32>,
+    #[serde(default)]
+    pub prompt_eval_count: Option<u32>,
+    #[serde(default)]
+    pub eval_duration: Option<u64>,
+    #[serde(default)]
+    pub total_duration: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -42,11 +50,12 @@ pub struct OllamaMessageContent {
     pub content: String,
 }
 
-/// Parse an NDJSON stream from Ollama into (stream_chunks, full_text).
-pub fn parse_ollama_ndjson(data: &str) -> (Vec<String>, Option<String>) {
+/// Parse an NDJSON stream from Ollama into (stream_chunks, full_text, token_usage).
+pub fn parse_ollama_ndjson(data: &str) -> (Vec<String>, Option<String>, Option<TokenUsage>) {
     let mut chunks = Vec::new();
     let mut full_text = String::new();
     let mut got_done = false;
+    let mut usage: Option<TokenUsage> = None;
 
     for line in data.lines() {
         let line = line.trim();
@@ -62,14 +71,22 @@ pub fn parse_ollama_ndjson(data: &str) -> (Vec<String>, Option<String>) {
             }
             if parsed.done {
                 got_done = true;
+                // Extract token usage from the final "done" message
+                if parsed.eval_count.is_some() || parsed.total_duration.is_some() {
+                    usage = Some(TokenUsage {
+                        input_tokens: parsed.prompt_eval_count,
+                        output_tokens: parsed.eval_count,
+                        duration_ms: parsed.total_duration.map(|ns| ns / 1_000_000),
+                    });
+                }
             }
         }
     }
 
     if got_done {
-        (chunks, Some(full_text))
+        (chunks, Some(full_text), usage)
     } else {
-        (chunks, None)
+        (chunks, None, None)
     }
 }
 
@@ -259,10 +276,12 @@ impl AgentPlugin for OllamaPlugin {
                                     }
                                 };
 
+                                let req_start = std::time::Instant::now();
                                 match client.post(&api_url).json(&request).send().await {
                                     Ok(response) => {
                                         let mut full_text = String::new();
                                         let mut buf = String::new();
+                                        let mut token_usage: Option<TokenUsage> = None;
 
                                         // Stream the response using chunk()
                                         let mut resp = response;
@@ -312,6 +331,15 @@ impl AgentPlugin for OllamaPlugin {
                                                             }
 
                                                             if parsed.done {
+                                                                // Extract token usage from done line
+                                                                let duration_ms = parsed.total_duration
+                                                                    .map(|ns| ns / 1_000_000)
+                                                                    .or_else(|| Some(req_start.elapsed().as_millis() as u64));
+                                                                token_usage = Some(TokenUsage {
+                                                                    input_tokens: parsed.prompt_eval_count,
+                                                                    output_tokens: parsed.eval_count,
+                                                                    duration_ms,
+                                                                });
                                                                 break;
                                                             }
                                                         }
@@ -347,6 +375,7 @@ impl AgentPlugin for OllamaPlugin {
                                                     agent_name: Some(
                                                         model.clone(),
                                                     ),
+                                                    usage: token_usage.clone(),
                                                 });
                                                 cs.waiting_for_reply = false;
                                             }
@@ -362,6 +391,7 @@ impl AgentPlugin for OllamaPlugin {
                                                             ),
                                                             text: full_text,
                                                         },
+                                                        token_usage,
                                                     ),
                                                 );
                                             }
@@ -432,6 +462,32 @@ impl AgentPlugin for OllamaPlugin {
     fn command_sender(&self) -> Option<mpsc::UnboundedSender<PluginCommand>> {
         self.cmd_tx.clone()
     }
+
+    fn health_check(&self) -> HealthStatus {
+        let check_url = format!("{}/api/tags", self.url.trim_end_matches('/'));
+        let start = std::time::Instant::now();
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return HealthStatus { reachable: false, latency_ms: 0, error: Some(format!("{e}")) },
+        };
+        let result = client.get(&check_url).send();
+        let latency_ms = start.elapsed().as_millis() as u64;
+        match result {
+            Ok(resp) => {
+                let ok = resp.status().is_success();
+                if ok {
+                    HealthStatus { reachable: true, latency_ms, error: None }
+                } else {
+                    let s = resp.status();
+                    HealthStatus { reachable: false, latency_ms, error: Some(format!("HTTP {s}")) }
+                }
+            }
+            Err(e) => HealthStatus { reachable: false, latency_ms, error: Some(format!("{e}")) },
+        }
+    }
 }
 
 fn slug(name: &str) -> String {
@@ -454,7 +510,7 @@ mod tests {
 {"message":{"role":"assistant","content":"!"},"done":false}
 {"message":{"role":"assistant","content":""},"done":true}
 "#;
-        let (chunks, full) = parse_ollama_ndjson(data);
+        let (chunks, full, _usage) = parse_ollama_ndjson(data);
         assert_eq!(chunks, vec!["Hello", " world", "!"]);
         assert_eq!(full, Some("Hello world!".to_string()));
     }
@@ -463,7 +519,7 @@ mod tests {
     fn parse_ndjson_incomplete_stream() {
         let data = r#"{"message":{"role":"assistant","content":"partial"},"done":false}
 "#;
-        let (chunks, full) = parse_ollama_ndjson(data);
+        let (chunks, full, _usage) = parse_ollama_ndjson(data);
         assert_eq!(chunks, vec!["partial"]);
         assert_eq!(full, None);
     }
@@ -474,7 +530,7 @@ mod tests {
 {"message":{"role":"assistant","content":"hi"},"done":false}
 {"done":true}
 "#;
-        let (chunks, full) = parse_ollama_ndjson(data);
+        let (chunks, full, _usage) = parse_ollama_ndjson(data);
         assert_eq!(chunks, vec!["hi"]);
         assert_eq!(full, Some("hi".to_string()));
     }
@@ -485,7 +541,7 @@ mod tests {
 {"message":{"role":"assistant","content":"ok"},"done":false}
 {"done":true}
 "#;
-        let (chunks, full) = parse_ollama_ndjson(data);
+        let (chunks, full, _usage) = parse_ollama_ndjson(data);
         assert_eq!(chunks, vec!["ok"]);
         assert_eq!(full, Some("ok".to_string()));
     }

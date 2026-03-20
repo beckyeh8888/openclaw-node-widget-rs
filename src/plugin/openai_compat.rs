@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::{
-    AgentPlugin, ConnectionStatus, PluginCapabilities, PluginCommand, PluginError, PluginEvent,
-    PluginId,
+    AgentPlugin, ConnectionStatus, HealthStatus, PluginCapabilities, PluginCommand, PluginError,
+    PluginEvent, PluginId, TokenUsage,
 };
 use crate::chat::{ChatInbound, ChatMessage, ChatSender, ChatState};
 use crate::config::PluginConfig;
@@ -30,6 +30,18 @@ pub struct OpenAIMessage {
 pub struct OpenAIStreamChunk {
     #[serde(default)]
     pub choices: Vec<OpenAIChoice>,
+    #[serde(default)]
+    pub usage: Option<OpenAIUsage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct OpenAIUsage {
+    #[serde(default)]
+    pub prompt_tokens: Option<u32>,
+    #[serde(default)]
+    pub completion_tokens: Option<u32>,
+    #[serde(default)]
+    pub total_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -294,10 +306,12 @@ impl AgentPlugin for OpenAICompatPlugin {
                             req = req.header("Authorization", auth);
                         }
 
+                        let req_start = std::time::Instant::now();
                         match req.send().await {
                             Ok(response) => {
                                 let mut full_text = String::new();
                                 let mut buf = String::new();
+                                let mut token_usage: Option<TokenUsage> = None;
 
                                 let mut resp = response;
                                 loop {
@@ -349,6 +363,14 @@ impl AgentPlugin for OpenAICompatPlugin {
                                                                 }
                                                             }
                                                         }
+                                                        // Capture usage from final chunk (if present)
+                                                        if let Some(usage) = &chunk.usage {
+                                                            token_usage = Some(TokenUsage {
+                                                                input_tokens: usage.prompt_tokens,
+                                                                output_tokens: usage.completion_tokens,
+                                                                duration_ms: Some(req_start.elapsed().as_millis() as u64),
+                                                            });
+                                                        }
                                                     }
                                                 }
                                             }
@@ -361,6 +383,15 @@ impl AgentPlugin for OpenAICompatPlugin {
                                             break;
                                         }
                                     }
+                                }
+
+                                // If no usage from API, at least record duration
+                                if token_usage.is_none() && !full_text.is_empty() {
+                                    token_usage = Some(TokenUsage {
+                                        input_tokens: None,
+                                        output_tokens: None,
+                                        duration_ms: Some(req_start.elapsed().as_millis() as u64),
+                                    });
                                 }
 
                                 if !full_text.is_empty() {
@@ -381,6 +412,7 @@ impl AgentPlugin for OpenAICompatPlugin {
                                         cs.inbox.push(ChatInbound::Reply {
                                             text: full_text.clone(),
                                             agent_name: Some(model.clone()),
+                                            usage: token_usage.clone(),
                                         });
                                         cs.waiting_for_reply = false;
                                     }
@@ -396,6 +428,7 @@ impl AgentPlugin for OpenAICompatPlugin {
                                                     ),
                                                     text: full_text,
                                                 },
+                                                token_usage,
                                             ),
                                         );
                                     }
@@ -456,6 +489,36 @@ impl AgentPlugin for OpenAICompatPlugin {
 
     fn command_sender(&self) -> Option<mpsc::UnboundedSender<PluginCommand>> {
         self.cmd_tx.clone()
+    }
+
+    fn health_check(&self) -> HealthStatus {
+        let check_url = format!("{}/models", self.url.trim_end_matches('/'));
+        let start = std::time::Instant::now();
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return HealthStatus { reachable: false, latency_ms: 0, error: Some(format!("{e}")) },
+        };
+        let mut req = client.get(&check_url);
+        if let Some(auth) = build_auth_header(&self.api_key) {
+            req = req.header("Authorization", auth);
+        }
+        let result = req.send();
+        let latency_ms = start.elapsed().as_millis() as u64;
+        match result {
+            Ok(resp) => {
+                let ok = resp.status().is_success();
+                if ok {
+                    HealthStatus { reachable: true, latency_ms, error: None }
+                } else {
+                    let s = resp.status();
+                    HealthStatus { reachable: false, latency_ms, error: Some(format!("HTTP {s}")) }
+                }
+            }
+            Err(e) => HealthStatus { reachable: false, latency_ms, error: Some(format!("{e}")) },
+        }
     }
 }
 

@@ -31,7 +31,7 @@ global-hotkey = "0.6"
 tray-icon = "0.14"
 url = "2"
 open = "5"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "blocking"] }
 sys-locale = "0.3"
 tao = "0.33"
 wry = "0.50"

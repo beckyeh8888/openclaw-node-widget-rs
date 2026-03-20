@@ -823,6 +823,7 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
         cs.inbox.push(crate::chat::ChatInbound::Reply {
             text: text.to_string(),
             agent_name,
+            usage: None,
         });
     }
 }
@@ -871,6 +872,7 @@ fn handle_chat_response(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload
             cs.inbox.push(crate::chat::ChatInbound::Reply {
                 text: text.to_string(),
                 agent_name,
+                usage: None,
             });
         }
     }

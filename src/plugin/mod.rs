@@ -14,6 +14,22 @@ use crate::gateway::ChatAttachment;
 
 // ── Value Objects ───────────────────────────────────────────────────
 
+/// Token usage info returned by an agent backend.
+#[derive(Debug, Clone, Default)]
+pub struct TokenUsage {
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
+    pub duration_ms: Option<u64>,
+}
+
+/// Health check result for a plugin.
+#[derive(Debug, Clone)]
+pub struct HealthStatus {
+    pub reachable: bool,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+}
+
 /// Unique identifier for a plugin instance.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PluginId(pub String);
@@ -70,7 +86,7 @@ impl fmt::Display for ConnectionStatus {
 pub enum PluginEvent {
     Connected(PluginId),
     Disconnected(PluginId, String),
-    MessageReceived(PluginId, ChatMessage),
+    MessageReceived(PluginId, ChatMessage, Option<TokenUsage>),
     StreamStart {
         plugin_id: PluginId,
         msg_id: String,
@@ -166,4 +182,20 @@ pub trait AgentPlugin: Send {
     /// chat UI so it can send commands without holding a mutable
     /// reference to the plugin.
     fn command_sender(&self) -> Option<mpsc::UnboundedSender<PluginCommand>>;
+
+    /// Perform a lightweight health check (e.g. ping the backend).
+    /// Returns reachability, latency, and optional error.
+    fn health_check(&self) -> HealthStatus {
+        // Default: report connected/disconnected based on current status.
+        let connected = matches!(self.status(), ConnectionStatus::Connected);
+        HealthStatus {
+            reachable: connected,
+            latency_ms: 0,
+            error: if connected {
+                None
+            } else {
+                Some("not connected".to_string())
+            },
+        }
+    }
 }

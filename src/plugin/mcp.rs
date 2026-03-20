@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::{
-    AgentPlugin, ConnectionStatus, PluginCapabilities, PluginCommand, PluginError, PluginEvent,
-    PluginId,
+    AgentPlugin, ConnectionStatus, HealthStatus, PluginCapabilities, PluginCommand, PluginError,
+    PluginEvent, PluginId,
 };
 use crate::chat::{ChatInbound, ChatMessage, ChatSender, ChatState};
 use crate::config::PluginConfig;
@@ -396,6 +396,7 @@ impl AgentPlugin for McpPlugin {
                                 cs.inbox.push(ChatInbound::Reply {
                                     text: text.clone(),
                                     agent_name: Some("MCP".to_string()),
+                                    usage: None,
                                 });
                                 cs.waiting_for_reply = false;
                             }
@@ -408,6 +409,7 @@ impl AgentPlugin for McpPlugin {
                                         sender: ChatSender::Agent("MCP".to_string()),
                                         text,
                                     },
+                                    None,
                                 ));
                             }
                         }
@@ -456,6 +458,53 @@ impl AgentPlugin for McpPlugin {
 
     fn command_sender(&self) -> Option<mpsc::UnboundedSender<PluginCommand>> {
         self.cmd_tx.clone()
+    }
+
+    fn health_check(&self) -> HealthStatus {
+        match &self.transport {
+            McpTransport::Sse { url } => {
+                if url.is_empty() {
+                    return HealthStatus {
+                        reachable: false,
+                        latency_ms: 0,
+                        error: Some("SSE URL not configured".to_string()),
+                    };
+                }
+                let start = std::time::Instant::now();
+                let client = match reqwest::blocking::Client::builder()
+                    .timeout(std::time::Duration::from_secs(5))
+                    .build()
+                {
+                    Ok(c) => c,
+                    Err(e) => return HealthStatus { reachable: false, latency_ms: 0, error: Some(format!("{e}")) },
+                };
+                let result = client.head(url).send();
+                let latency_ms = start.elapsed().as_millis() as u64;
+                match result {
+                    Ok(_) => HealthStatus { reachable: true, latency_ms, error: None },
+                    Err(e) => HealthStatus { reachable: false, latency_ms, error: Some(format!("{e}")) },
+                }
+            }
+            McpTransport::Stdio { command, .. } => {
+                // For stdio, just check the command binary exists
+                let reachable = !command.is_empty()
+                    && std::process::Command::new(command)
+                        .arg("--version")
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status()
+                        .is_ok();
+                HealthStatus {
+                    reachable,
+                    latency_ms: 0,
+                    error: if reachable {
+                        None
+                    } else {
+                        Some(format!("command '{}' not found", command))
+                    },
+                }
+            }
+        }
     }
 }
 

@@ -32,7 +32,7 @@ fn scenario_show_connected_plugins_on_dashboard() {
     tracker.push(23);
     let start = std::time::Instant::now();
 
-    let data = build_dashboard_data(&statuses, &plugin_types, &tracker, start);
+    let data = build_dashboard_data(&statuses, &plugin_types, &tracker, start, None);
 
     assert_eq!(data.plugins.len(), 2, "should have 2 plugin cards");
     assert_eq!(data.plugins[0].status, "connected");
@@ -72,7 +72,7 @@ fn scenario_realtime_latency_update() {
         ("oc-1".to_string(), "openclaw".to_string(), "🦞".to_string()),
     ];
     let start = std::time::Instant::now();
-    let data = build_dashboard_data(&statuses, &plugin_types, &tracker, start);
+    let data = build_dashboard_data(&statuses, &plugin_types, &tracker, start, None);
 
     assert_eq!(data.latency_history.len(), 2);
     assert_eq!(data.latency_history[1], 150);
@@ -94,7 +94,7 @@ fn scenario_plugin_goes_offline() {
     let tracker = LatencyTracker::new();
     let start = std::time::Instant::now();
 
-    let data = build_dashboard_data(&statuses, &plugin_types, &tracker, start);
+    let data = build_dashboard_data(&statuses, &plugin_types, &tracker, start, None);
 
     assert_eq!(data.plugins[0].status, "disconnected");
 }
@@ -111,7 +111,7 @@ fn scenario_plugin_error_state() {
     let tracker = LatencyTracker::new();
     let start = std::time::Instant::now();
 
-    let data = build_dashboard_data(&statuses, &plugin_types, &tracker, start);
+    let data = build_dashboard_data(&statuses, &plugin_types, &tracker, start, None);
 
     assert_eq!(data.plugins[0].status, "error");
 }
@@ -128,7 +128,7 @@ fn scenario_plugin_reconnecting_state() {
     let tracker = LatencyTracker::new();
     let start = std::time::Instant::now();
 
-    let data = build_dashboard_data(&statuses, &plugin_types, &tracker, start);
+    let data = build_dashboard_data(&statuses, &plugin_types, &tracker, start, None);
 
     assert_eq!(data.plugins[0].status, "reconnecting");
 }

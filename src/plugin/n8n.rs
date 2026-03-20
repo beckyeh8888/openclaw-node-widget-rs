@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 
 use super::{
-    AgentPlugin, ConnectionStatus, PluginCapabilities, PluginCommand, PluginError, PluginEvent,
-    PluginId,
+    AgentPlugin, ConnectionStatus, HealthStatus, PluginCapabilities, PluginCommand, PluginError,
+    PluginEvent, PluginId,
 };
 use crate::chat::{ChatInbound, ChatMessage, ChatSender, ChatState};
 use crate::config::PluginConfig;
@@ -356,6 +356,30 @@ impl AgentPlugin for N8nPlugin {
     fn command_sender(&self) -> Option<mpsc::UnboundedSender<PluginCommand>> {
         self.cmd_tx.clone()
     }
+
+    fn health_check(&self) -> HealthStatus {
+        if self.webhook_url.is_empty() {
+            return HealthStatus {
+                reachable: false,
+                latency_ms: 0,
+                error: Some("webhook URL not configured".to_string()),
+            };
+        }
+        let start = std::time::Instant::now();
+        let client = match reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => return HealthStatus { reachable: false, latency_ms: 0, error: Some(format!("{e}")) },
+        };
+        let result = client.head(&self.webhook_url).send();
+        let latency_ms = start.elapsed().as_millis() as u64;
+        match result {
+            Ok(_) => HealthStatus { reachable: true, latency_ms, error: None },
+            Err(e) => HealthStatus { reachable: false, latency_ms, error: Some(format!("{e}")) },
+        }
+    }
 }
 
 /// Push a reply into the chat state and emit a MessageReceived event.
@@ -370,6 +394,7 @@ fn emit_reply(
         cs.inbox.push(ChatInbound::Reply {
             text: text.to_string(),
             agent_name: Some(plugin_name.to_string()),
+            usage: None,
         });
         cs.waiting_for_reply = false;
     }
@@ -380,6 +405,7 @@ fn emit_reply(
                 sender: ChatSender::Agent(plugin_name.to_string()),
                 text: text.to_string(),
             },
+            None,
         ));
     }
 }

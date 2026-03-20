@@ -247,6 +247,8 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     let start_time = std::time::Instant::now();
     let mut latency_tracker = dashboard::LatencyTracker::new();
     let mut last_dashboard_push = std::time::Instant::now();
+    let mut health_tracker = dashboard::HealthTracker::new();
+    let mut last_health_check = std::time::Instant::now();
 
     // ── Build PluginRegistry from config ────────────────────────────
     let mut plugin_registry = PluginRegistry::new();
@@ -503,6 +505,7 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                 &plugin_types,
                 &latency_tracker,
                 start_time,
+                Some(&health_tracker),
             );
             if let Ok(mut cs) = chat_state.lock() {
                 cs.dashboard_data = dash_data;
@@ -518,7 +521,7 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                 let mut remaining = Vec::new();
                 for event in cs.inbox.drain(..) {
                     match event {
-                        chat::ChatInbound::Reply { text, agent_name } => {
+                        chat::ChatInbound::Reply { text, agent_name, .. } => {
                             replies.push((text, agent_name));
                         }
                         other => remaining.push(other),
@@ -530,7 +533,10 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                     let agent = agent_name.as_deref().unwrap_or("Agent");
                     let preview: String = text.chars().take(100).collect();
                     if config.widget.notifications {
-                        tray::send_notification_public(&format!("{agent} replied: {preview}"));
+                        tray::send_chat_notification(
+                            &format!("{agent} replied: {preview}"),
+                            &tray_cmd_tx_hotkey,
+                        );
                     }
                     let name = agent_name.unwrap_or_else(|| "Agent".to_string());
                     cs.messages.push(chat::ChatMessage {
@@ -706,6 +712,18 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                 }
                 TrayCommand::Exit => return Ok(()),
             }
+        }
+
+        // Periodic plugin health checks (every 60s)
+        if last_health_check.elapsed() >= std::time::Duration::from_secs(60) {
+            let results = plugin_registry.health_check_all();
+            for (plugin_id, health) in &results {
+                health_tracker.record(plugin_id, health.clone());
+            }
+            // Update tray plugin statuses after health check
+            let statuses = plugin_registry.plugin_statuses();
+            tray.update_plugin_statuses(&statuses);
+            last_health_check = std::time::Instant::now();
         }
 
         // Periodic Tailscale status check (every 60s)

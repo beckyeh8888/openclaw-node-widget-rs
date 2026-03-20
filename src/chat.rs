@@ -9,7 +9,7 @@ use crate::dashboard::{DashboardData, LogBuffer, LogEntry, LogLevel};
 use crate::gateway::{ChatAttachment, ChatSessionInfo, GatewayCommand};
 use crate::history::{ChatHistory, PersistedMessage};
 use crate::i18n;
-use crate::plugin::PluginCommand;
+use crate::plugin::{PluginCommand, TokenUsage};
 
 const MAX_MESSAGES: usize = 50;
 
@@ -30,6 +30,7 @@ pub enum ChatInbound {
     Reply {
         text: String,
         agent_name: Option<String>,
+        usage: Option<TokenUsage>,
     },
     StreamStart {
         msg_id: String,
@@ -719,7 +720,7 @@ fn process_inbox_to_webview(
 
     for event in events {
         match event {
-            ChatInbound::Reply { text, agent_name } => {
+            ChatInbound::Reply { text, agent_name, usage } => {
                 let name = agent_name.unwrap_or_else(|| "Agent".to_string());
                 state.messages.push(ChatMessage {
                     sender: ChatSender::Agent(name.clone()),
@@ -730,10 +731,18 @@ fn process_inbox_to_webview(
                     state.messages.remove(0);
                 }
 
+                let usage_json = usage.as_ref().map(|u| {
+                    json!({
+                        "input_tokens": u.input_tokens,
+                        "output_tokens": u.output_tokens,
+                        "duration_ms": u.duration_ms,
+                    })
+                });
                 let msg_json = json!({
                     "sender": "agent",
                     "agentName": name,
                     "text": text,
+                    "usage": usage_json,
                 });
                 let _ = webview
                     .evaluate_script(&format!("addMessage({})", msg_json));
@@ -991,12 +1000,13 @@ mod tests {
         state.inbox.push(ChatInbound::Reply {
             text: "answer".to_string(),
             agent_name: Some("Bot".to_string()),
+            usage: None,
         });
 
         // Simulate process_inbox_to_webview logic (without webview)
         let events: Vec<_> = state.inbox.drain(..).collect();
         for event in events {
-            if let ChatInbound::Reply { text, agent_name } = event {
+            if let ChatInbound::Reply { text, agent_name, .. } = event {
                 let name = agent_name.unwrap_or_else(|| "Agent".to_string());
                 state.messages.push(ChatMessage {
                     sender: ChatSender::Agent(name),
@@ -1021,11 +1031,12 @@ mod tests {
         state.inbox.push(ChatInbound::Reply {
             text: "hi".to_string(),
             agent_name: None,
+            usage: None,
         });
 
         let events: Vec<_> = state.inbox.drain(..).collect();
         for event in events {
-            if let ChatInbound::Reply { text, agent_name } = event {
+            if let ChatInbound::Reply { text, agent_name, .. } = event {
                 let name = agent_name.unwrap_or_else(|| "Agent".to_string());
                 state.messages.push(ChatMessage {
                     sender: ChatSender::Agent(name),

@@ -9,6 +9,15 @@ const MAX_LATENCY_SAMPLES: usize = 30;
 
 // ── Dashboard Data ──────────────────────────────────────────────────
 
+/// Health check record for a single plugin.
+#[derive(Debug, Clone, Serialize)]
+pub struct PluginHealthRecord {
+    pub reachable: bool,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+    pub timestamp: String,
+}
+
 /// Aggregated status for a single plugin shown on the dashboard.
 #[derive(Debug, Clone, Serialize)]
 pub struct PluginStatusCard {
@@ -19,6 +28,8 @@ pub struct PluginStatusCard {
     pub status: String,
     pub latency_ms: Option<u64>,
     pub uptime_secs: Option<u64>,
+    pub health: Option<PluginHealthRecord>,
+    pub uptime_pct: Option<f64>,
 }
 
 /// Full dashboard payload sent to the WebView.
@@ -196,11 +207,61 @@ impl LatencyTracker {
 }
 
 /// Build a DashboardData snapshot from plugin statuses and latency tracker.
+/// Tracks health check history per plugin for uptime calculation.
+pub struct HealthTracker {
+    /// (plugin_id → ring buffer of (reachable, timestamp))
+    history: std::collections::HashMap<String, VecDeque<(bool, std::time::Instant)>>,
+    /// Most recent health result per plugin.
+    latest: std::collections::HashMap<String, crate::plugin::HealthStatus>,
+}
+
+impl HealthTracker {
+    pub fn new() -> Self {
+        Self {
+            history: std::collections::HashMap::new(),
+            latest: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Record a health check result.
+    pub fn record(&mut self, plugin_id: &str, status: crate::plugin::HealthStatus) {
+        let buf = self.history.entry(plugin_id.to_string()).or_insert_with(|| VecDeque::with_capacity(61));
+        buf.push_back((status.reachable, std::time::Instant::now()));
+        // Keep last ~60 samples (1 hour at 60s interval)
+        while buf.len() > 60 {
+            buf.pop_front();
+        }
+        self.latest.insert(plugin_id.to_string(), status);
+    }
+
+    /// Get uptime percentage for a plugin (last hour).
+    pub fn uptime_pct(&self, plugin_id: &str) -> Option<f64> {
+        let buf = self.history.get(plugin_id)?;
+        if buf.is_empty() {
+            return None;
+        }
+        let total = buf.len() as f64;
+        let up = buf.iter().filter(|(ok, _)| *ok).count() as f64;
+        Some((up / total) * 100.0)
+    }
+
+    /// Get the latest health record for a plugin.
+    pub fn latest_record(&self, plugin_id: &str) -> Option<PluginHealthRecord> {
+        self.latest.get(plugin_id).map(|h| PluginHealthRecord {
+            reachable: h.reachable,
+            latency_ms: h.latency_ms,
+            error: h.error.clone(),
+            timestamp: now_timestamp(),
+        })
+    }
+}
+
 pub fn build_dashboard_data(
     plugin_statuses: &[(String, String, ConnectionStatus)],
     plugin_types: &[(String, String, String)], // (id, plugin_type, icon)
     latency_tracker: &LatencyTracker,
     start_time: std::time::Instant,
+    health_tracker: Option<&HealthTracker>,
 ) -> DashboardData {
     let mut data = DashboardData::new();
     data.uptime_secs = start_time.elapsed().as_secs();
@@ -220,6 +281,9 @@ pub fn build_dashboard_data(
             ConnectionStatus::Error(_) => "error",
         };
 
+        let health = health_tracker.and_then(|ht| ht.latest_record(id));
+        let uptime_pct = health_tracker.and_then(|ht| ht.uptime_pct(id));
+
         data.plugins.push(PluginStatusCard {
             id: id.clone(),
             name: name.clone(),
@@ -228,6 +292,8 @@ pub fn build_dashboard_data(
             status: status_str.to_string(),
             latency_ms: latency_tracker.avg(),
             uptime_secs: Some(start_time.elapsed().as_secs()),
+            health,
+            uptime_pct,
         });
     }
 

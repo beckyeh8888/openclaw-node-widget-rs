@@ -277,6 +277,13 @@ body {
   margin-top: 2px;
   padding: 0 12px;
 }
+.message-usage {
+  font-size: 10px;
+  color: var(--text-dimmed);
+  text-align: right;
+  margin-top: 1px;
+  padding: 0 12px;
+}
 
 #typingIndicator {
   display: none;
@@ -1528,6 +1535,18 @@ function addMessage(m) {
   ts.textContent = fmtTime(new Date());
   w.appendChild(ts);
 
+  if (m.usage && m.sender === "agent") {
+    var usageEl = document.createElement("div");
+    usageEl.className = "message-usage";
+    var parts = [];
+    if (m.usage.output_tokens) parts.push(m.usage.output_tokens + " tokens");
+    if (m.usage.duration_ms) parts.push((m.usage.duration_ms / 1000).toFixed(1) + "s");
+    if (parts.length > 0) {
+      usageEl.textContent = parts.join(" \u00b7 ");
+      w.appendChild(usageEl);
+    }
+  }
+
   c.appendChild(w);
   scrollBottom();
 }
@@ -1694,14 +1713,29 @@ function updateDashboard(data) {
       var p = data.plugins[i];
       var card = document.createElement("div");
       card.className = "plugin-card";
+      var healthHtml = '';
+      if (p.health) {
+        healthHtml = '<div class="plugin-card-latency">ping: ' + p.health.latency_ms + 'ms</div>';
+        if (p.health.error) {
+          healthHtml += '<div style="font-size:11px;color:#ff4444;">' + escHtml(p.health.error) + '</div>';
+        }
+      } else if (p.latency_ms != null) {
+        healthHtml = '<div class="plugin-card-latency">' + p.latency_ms + 'ms</div>';
+      }
+      var uptimeHtml = '';
+      if (p.uptime_pct != null) {
+        uptimeHtml = '<div class="plugin-card-uptime">\u2191 ' + p.uptime_pct.toFixed(1) + '% uptime</div>';
+      } else if (p.uptime_secs != null) {
+        uptimeHtml = '<div class="plugin-card-uptime">\u2191 ' + fmtUptime(p.uptime_secs) + '</div>';
+      }
       card.innerHTML =
         '<div class="plugin-card-header">' +
           '<span class="status-dot ' + (p.status || 'disconnected') + '"></span>' +
           '<span class="plugin-card-name">' + escHtml(p.icon + ' ' + p.name) + '</span>' +
         '</div>' +
         '<div class="plugin-card-type">' + escHtml(p.plugin_type) + '</div>' +
-        (p.latency_ms != null ? '<div class="plugin-card-latency">' + p.latency_ms + 'ms</div>' : '') +
-        (p.uptime_secs != null ? '<div class="plugin-card-uptime">\u2191 ' + fmtUptime(p.uptime_secs) + '</div>' : '') +
+        healthHtml +
+        uptimeHtml +
         '<div class="plugin-card-status-text ' + (p.status || 'disconnected') + '">' +
           (p.status === 'connected' ? 'Connected' : p.status === 'reconnecting' ? 'Reconnecting...' : 'Disconnected') +
         '</div>';

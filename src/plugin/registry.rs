@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 use super::{
-    AgentPlugin, ConnectionStatus, PluginCommand, PluginError,
+    AgentPlugin, ConnectionStatus, HealthStatus, PluginCommand, PluginError,
 };
 use crate::gateway::ChatAttachment;
 
@@ -141,6 +141,18 @@ impl PluginRegistry {
     pub fn list_sessions(&self) -> Result<(), PluginError> {
         let plugin = self.active().ok_or_else(|| PluginError("no active plugin".to_string()))?;
         plugin.list_sessions()
+    }
+
+    /// Run health checks on all plugins and return results.
+    pub fn health_check_all(&self) -> Vec<(String, HealthStatus)> {
+        self.order
+            .iter()
+            .filter_map(|k| {
+                self.plugins.get(k).map(|p| {
+                    (p.id().0.clone(), p.health_check())
+                })
+            })
+            .collect()
     }
 
     /// Get status info for all plugins (for tray display).

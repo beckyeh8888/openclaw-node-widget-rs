@@ -24,7 +24,7 @@ fn scenario_parse_ollama_chat_response() {
 {"message":{"role":"assistant","content":""},"done":true}
 "#;
 
-    let (chunks, full_text) = parse_ollama_ndjson(ndjson);
+    let (chunks, full_text, _usage) = parse_ollama_ndjson(ndjson);
 
     assert_eq!(chunks.len(), 3, "should emit 3 StreamChunk events");
     assert_eq!(chunks, vec!["Hello", " there", "!"]);
@@ -191,7 +191,7 @@ fn scenario_config_parsing() {
 fn scenario_ndjson_done_only() {
     let data = r#"{"done":true}
 "#;
-    let (chunks, full) = parse_ollama_ndjson(data);
+    let (chunks, full, _usage) = parse_ollama_ndjson(data);
     assert!(chunks.is_empty());
     assert_eq!(full, Some(String::new()));
 }
@@ -209,7 +209,7 @@ fn scenario_ndjson_many_chunks() {
     lines.push_str(r#"{"done":true}"#);
     lines.push('\n');
 
-    let (chunks, full) = parse_ollama_ndjson(&lines);
+    let (chunks, full, _usage) = parse_ollama_ndjson(&lines);
     assert_eq!(chunks.len(), 10);
     assert!(full.is_some());
     assert_eq!(full.unwrap(), "w0w1w2w3w4w5w6w7w8w9");
