@@ -914,15 +914,11 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
             // Filter by active agent session key (substring match for canonical keys)
             // "main" matches "agent:main:telegram:direct:..." 
             let active_key = &cs.active_session_key;
-            // Match logic: for "main", match "agent:main:" prefix;
-            // for canonical keys like "agent:office:main", use substring match
+            // Match: exact match or active key is prefix of event key
             let is_match = active_key.is_empty()
                 || evt_key == active_key.as_str()
-                || (active_key == "main" && evt_key.starts_with("agent:main:"))
-                || (active_key != "main" && (
-                    evt_key.starts_with(active_key.as_str())
-                    || active_key.starts_with(evt_key)
-                ));
+                || evt_key.starts_with(&format!("{}:", active_key))
+                || active_key.starts_with(&format!("{}:", evt_key));
             if !is_match {
                 tracing::debug!(
                     evt_key,
@@ -1037,12 +1033,10 @@ fn handle_chat_response(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload
                     .and_then(Value::as_str)
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| {
-                        // Gateway expects canonical session keys like "agent:{id}:main"
-                        if id == "main" {
-                            "main".to_string()
-                        } else {
-                            format!("agent:{}:main", id)
-                        }
+                        // All agents use canonical session key format
+                        // "main" agent gets "agent:main:widget" to create a
+                        // separate session from Telegram (so broadcast events work)
+                        format!("agent:{}:widget", id)
                     });
                 Some(AgentInfo {
                     id: id.to_string(),
