@@ -786,9 +786,12 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
             || !done);
 
     if let Ok(mut cs) = chat_state.lock() {
-        // If the event carries a sessionKey that differs from the active session, drop it.
+        // Session filter: drop events whose sessionKey does NOT match the active session.
+        // If the event has no sessionKey, allow it through (Gateway may omit it for direct replies).
         if let Some(evt_key) = event_session {
-            if evt_key != cs.active_session_key {
+            // Check if it's a sub-agent or isolated session (contains "isolated" or starts with "run:")
+            let is_sub = evt_key.contains("isolated") || evt_key.starts_with("run:");
+            if is_sub || evt_key != cs.active_session_key {
                 tracing::debug!(
                     "ignoring chat event for session {evt_key} (active: {})",
                     cs.active_session_key
