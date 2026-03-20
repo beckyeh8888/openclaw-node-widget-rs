@@ -191,6 +191,8 @@ fn scenario_apply_general_settings() {
     config.apply_general_settings(&GeneralSettings {
         language: "zh-tw".to_string(),
         auto_start: true,
+        theme: "dark".to_string(),
+        always_on_top: false,
     });
 
     assert_eq!(config.widget.language, "zh-tw");
