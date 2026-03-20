@@ -758,14 +758,77 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
         return;
     }
 
-    let text = payload
+    // Extract text from various Gateway chat event formats:
+    // 1. payload.text (simple)
+    // 2. payload.message (string)
+    // 3. payload.content (string)
+    // 4. payload.message.content[0].text (OpenClaw streaming format)
+    // 5. payload.message.content (string, simplified)
+    let text: Option<String> = payload
         .get("text")
-        .or_else(|| payload.get("message"))
-        .or_else(|| payload.get("content"))
-        .and_then(Value::as_str);
+        .and_then(Value::as_str)
+        .map(String::from)
+        .or_else(|| {
+            payload.get("message").and_then(|m| {
+                // If message is a string, use it directly
+                if let Some(s) = m.as_str() {
+                    return Some(s.to_string());
+                }
+                // If message is an object with content array
+                if let Some(content) = m.get("content") {
+                    if let Some(s) = content.as_str() {
+                        return Some(s.to_string());
+                    }
+                    if let Some(arr) = content.as_array() {
+                        // Collect all text parts
+                        let parts: Vec<&str> = arr
+                            .iter()
+                            .filter_map(|item| {
+                                if item.get("type").and_then(Value::as_str) == Some("text") {
+                                    item.get("text").and_then(Value::as_str)
+                                } else {
+                                    item.as_str()
+                                }
+                            })
+                            .collect();
+                        if !parts.is_empty() {
+                            return Some(parts.join(""));
+                        }
+                    }
+                }
+                None
+            })
+        })
+        .or_else(|| {
+            payload.get("content").and_then(|c| {
+                if let Some(s) = c.as_str() {
+                    return Some(s.to_string());
+                }
+                if let Some(arr) = c.as_array() {
+                    let parts: Vec<&str> = arr
+                        .iter()
+                        .filter_map(|item| {
+                            if item.get("type").and_then(Value::as_str) == Some("text") {
+                                item.get("text").and_then(Value::as_str)
+                            } else {
+                                item.as_str()
+                            }
+                        })
+                        .collect();
+                    if !parts.is_empty() {
+                        return Some(parts.join(""));
+                    }
+                }
+                None
+            })
+        });
 
     let Some(text) = text else {
-        warn!(?payload, "chat event with unknown format — skipping");
+        // Log but don't warn for state-only events (e.g. state: "running", "thinking")
+        let state = payload.get("state").and_then(Value::as_str).unwrap_or("");
+        if state != "running" && state != "thinking" && state != "tool-start" && state != "tool-end" {
+            tracing::debug!(?payload, "chat event with no extractable text — skipping");
+        }
         return;
     };
 
@@ -818,7 +881,7 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
                 let delta = payload
                     .get("delta")
                     .and_then(Value::as_str)
-                    .unwrap_or(text);
+                    .unwrap_or(&text);
                 cs.inbox.push(crate::chat::ChatInbound::StreamChunk {
                     msg_id: mid.clone(),
                     text: delta.to_string(),
