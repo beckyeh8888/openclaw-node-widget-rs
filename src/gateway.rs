@@ -635,6 +635,12 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
                 match message.map_err(|e| ConnectError::Retryable(format!("gateway read failed: {e}")))? {
                     Message::Text(text) => {
                         let frame = parse_frame(&text)?;
+                        // DEBUG: log all incoming frames to file for diagnosis
+                        if let Ok(ft) = serde_json::to_string(&frame.get("type")) {
+                            let evt = frame.get("event").and_then(Value::as_str).unwrap_or("-");
+                            let line = format!("[{}] type={} event={} len={}\n", chrono::Local::now().format("%H:%M:%S"), ft, evt, text.len());
+                            let _ = std::fs::OpenOptions::new().create(true).append(true).open("widget-ws-debug.log").map(|mut f| { use std::io::Write; let _ = f.write_all(line.as_bytes()); });
+                        }
                         handle_frame(&client.connection_name, &client.tx, &client.chat_state, &frame, pending_presence.as_deref(), &mut pending_chat_ids);
 
                         if frame_type(&frame) == Some("res") {
