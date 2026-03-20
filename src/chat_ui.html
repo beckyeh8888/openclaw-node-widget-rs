@@ -264,6 +264,24 @@ body {
   font-size: 14px;
 }
 
+#imageOverlay {
+  display: none;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.85);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+#imageOverlay.visible { display: flex; }
+#imageOverlay img {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: 8px;
+  box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+}
+
 #imagePreview {
   display: none;
   background: #16213e;
@@ -713,6 +731,8 @@ body {
 </head>
 <body>
 
+<div id="imageOverlay" onclick="closeOverlay()"><img id="overlayImg" src=""></div>
+
 <!-- Sidebar -->
 <div id="sidebar">
   <button class="nav-btn active" data-page="chat" title="Chat">💬</button>
@@ -1116,6 +1136,7 @@ function addMessage(m) {
   if (m.imageUrl) {
     var img = document.createElement("img");
     img.src = m.imageUrl;
+    img.onclick = function() { openOverlay(this.src); };
     b.appendChild(img);
   }
   if (m.text) {
@@ -1223,6 +1244,15 @@ function updateSend() {
   var inp = document.getElementById("messageInput");
   document.getElementById("sendBtn").disabled =
     !connected || (!inp.value.trim() && !attachment);
+}
+
+function openOverlay(src) {
+  document.getElementById("overlayImg").src = src;
+  document.getElementById("imageOverlay").classList.add("visible");
+}
+function closeOverlay() {
+  document.getElementById("imageOverlay").classList.remove("visible");
+  document.getElementById("overlayImg").src = "";
 }
 
 function clearPreview() {

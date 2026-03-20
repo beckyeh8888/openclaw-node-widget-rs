@@ -372,7 +372,12 @@ pub fn handle_ipc_message(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            if message.is_empty() {
+            let has_attachments = msg
+                .get("attachments")
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false);
+            if message.is_empty() && !has_attachments {
                 return;
             }
 

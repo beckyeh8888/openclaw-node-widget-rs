@@ -595,7 +595,7 @@ async fn connect_once(client: &GatewayClient, cmd_rx: &mut Option<mpsc::Unbounde
                         let mut params = json!({ "message": message, "idempotencyKey": idempotency_key, "sessionKey": sk });
                         if let Some(atts) = attachments {
                             let att_json: Vec<Value> = atts.iter().map(|a| {
-                                json!({"data": a.data, "filename": a.filename, "mimeType": a.mime_type})
+                                json!({"content": a.data, "filename": a.filename, "mimeType": a.mime_type})
                             }).collect();
                             params.as_object_mut().unwrap().insert("attachments".to_string(), json!(att_json));
                         }

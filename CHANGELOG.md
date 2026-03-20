@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.9.0] - 2026-03-20
+
+### Added
+- **WebView Chat UI**: Replaced egui chat with Telegram-style bubble interface (dark theme, CJK support)
+- **Plugin Architecture**: Extensible AgentPlugin trait — add any AI backend via config
+- **Ollama Plugin**: Connect to local Ollama instance for private AI chat
+- **OpenAI-Compatible Plugin**: Works with OpenAI, LM Studio, vLLM, Together, Groq, and any OpenAI-compatible API
+- **n8n Plugin**: Trigger n8n workflows as AI agents via webhook
+- **Markdown Rendering**: Agent replies now render bold, italic, code blocks, lists, and links
+- **Streaming Replies**: Messages appear token-by-token as they generate
+- **Dashboard Page**: Real-time plugin status, connection latency, node info
+- **Log Viewer Page**: Searchable, filterable live log stream
+- **Settings Page**: Manage plugins and preferences from within the app
+- **Chat History**: Conversations persist across restarts
+- **Multi-Session**: Switch between different agent sessions per plugin
+- **Image Upload**: Send images to agents via file picker or drag-and-drop
+- **Improved Notifications**: Plugin disconnect/reconnect alerts
+
+### Changed
+- Chat window is now a full SPA (Chat, Dashboard, Logs, Settings sidebar)
+- Plugin config format: `[[plugins]]` (auto-migrates from old `[[connections]]`)
+
+### Fixed
+- chat.send missing idempotencyKey (required by Gateway)
+- chat.send missing sessionKey (required by Gateway)
+
 ## [0.8.0] - 2026-03-19
 
 ### Added
