@@ -93,9 +93,9 @@ enum Commands {
     Config,
 }
 
-#[tokio::main]
-async fn main() {
-    match run().await {
+fn main() {
+    let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+    match rt.block_on(run()) {
         Ok(code) => std::process::exit(code),
         Err(err) => {
             error!("{err}");
@@ -404,341 +404,453 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
 
     let mut last_tailscale_check = std::time::Instant::now();
 
-    loop {
-        #[cfg(windows)]
-        unsafe {
-            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
-            };
-            let mut msg: MSG = std::mem::zeroed();
-            while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
-                TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        }
-
-        tray.poll_menu_events();
-
-        // Poll global hotkey events
-        if let Ok(event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
-            if event.state == global_hotkey::HotKeyState::Pressed {
-                let _ = tray_cmd_tx_hotkey.send(TrayCommand::OpenChat);
-            }
-        }
-
-        while let Ok(event) = gateway_event_rx.try_recv() {
-            tray.handle_gateway_event(&event)?;
-            let _ = gateway_monitor_tx.send(event.clone());
-
-            // Track latency and push log entries
-            match &event {
-                gateway::GatewayEvent::Latency { connection_name, ms } => {
-                    latency_tracker.push(*ms);
-                    if let Ok(mut cs) = chat_state.lock() {
-                        cs.add_log(
-                            dashboard::LogLevel::Info,
-                            connection_name,
-                            &format!("Latency: {}ms", ms),
-                        );
-                    }
-                }
-                gateway::GatewayEvent::Connected { connection_name, .. } => {
-                    if let Ok(mut cs) = chat_state.lock() {
-                        cs.add_log(
-                            dashboard::LogLevel::Info,
-                            connection_name,
-                            "Connected",
-                        );
-                    }
-                    // Notify on reconnection (if window not focused)
-                    if config.widget.notifications {
-                        let focused = chat_state.lock().map(|cs| cs.window_focused).unwrap_or(true);
-                        if !focused && notification_limiter.allow(connection_name) {
-                            tray::send_notification_public(&format!("{connection_name} reconnected"));
+    // ── Build chat command senders for webview IPC ──────────────
+    let chat_cmd_senders: Arc<std::collections::HashMap<String, mpsc::UnboundedSender<plugin::PluginCommand>>> = {
+        let senders = plugin_registry.command_senders();
+        if !senders.is_empty() {
+            Arc::new(senders)
+        } else if let Some(ref cmd_tx) = gateway_cmd_tx {
+            let (plugin_tx, mut plugin_rx) = mpsc::unbounded_channel::<plugin::PluginCommand>();
+            let gw_tx = cmd_tx.clone();
+            tokio::spawn(async move {
+                while let Some(cmd) = plugin_rx.recv().await {
+                    match cmd {
+                        plugin::PluginCommand::SendChat { message, session_key, attachments } => {
+                            let _ = gw_tx.send(gateway::GatewayCommand::SendChat { message, session_key, attachments });
+                        }
+                        plugin::PluginCommand::ListSessions => {
+                            let _ = gw_tx.send(gateway::GatewayCommand::ListSessions);
                         }
                     }
                 }
-                gateway::GatewayEvent::Disconnected { connection_name, reason } => {
-                    if let Ok(mut cs) = chat_state.lock() {
-                        cs.add_log(
-                            dashboard::LogLevel::Warn,
-                            connection_name,
-                            &format!("Disconnected: {}", reason),
-                        );
-                    }
-                    // Notify on disconnect
-                    if config.widget.notifications && notification_limiter.allow(connection_name) {
-                        tray::send_notification_public(&format!("{connection_name} disconnected"));
-                    }
-                }
-                gateway::GatewayEvent::Error { connection_name, message } => {
-                    if let Ok(mut cs) = chat_state.lock() {
-                        cs.add_log(
-                            dashboard::LogLevel::Error,
-                            connection_name,
-                            message,
-                        );
-                    }
-                    // Notify on error
-                    if config.widget.notifications && notification_limiter.allow(connection_name) {
-                        tray::send_notification_public(&format!("{connection_name} error: {message}"));
-                    }
-                }
-                gateway::GatewayEvent::NodeStatus { connection_name, online, node_name, .. } => {
-                    if let Ok(mut cs) = chat_state.lock() {
-                        let status = if *online { "online" } else { "offline" };
-                        let name = node_name.as_deref().unwrap_or("unknown");
-                        cs.add_log(
-                            dashboard::LogLevel::Info,
-                            connection_name,
-                            &format!("Node {} is {}", name, status),
-                        );
-                    }
-                }
-            }
+            });
+            let mut m = std::collections::HashMap::new();
+            m.insert("default".to_string(), plugin_tx);
+            Arc::new(m)
+        } else {
+            Arc::new(std::collections::HashMap::new())
         }
+    };
 
-        // Update dashboard data periodically (max 1/sec)
-        if last_dashboard_push.elapsed() >= std::time::Duration::from_secs(1) {
-            let statuses = plugin_registry.plugin_statuses();
-            let plugin_types: Vec<(String, String, String)> = plugin_registry
-                .all()
-                .iter()
-                .map(|p| (p.id().0.clone(), p.plugin_type().to_string(), p.icon().to_string()))
-                .collect();
-            let dash_data = dashboard::build_dashboard_data(
-                &statuses,
-                &plugin_types,
-                &latency_tracker,
-                start_time,
-                Some(&health_tracker),
-            );
-            if let Ok(mut cs) = chat_state.lock() {
-                cs.dashboard_data = dash_data;
-            }
-            last_dashboard_push = std::time::Instant::now();
-        }
+    // ── WebView / Window created on demand (first OpenChat) ────
+    let mut chat_window: Option<tao::window::Window> = None;
+    let mut chat_webview: Option<wry::WebView> = None;
 
-        // Chat notifications: when chat window is NOT open, notify on new replies
-        if let Ok(mut cs) = chat_state.lock() {
-            if !cs.window_open {
-                // Extract reply events from inbox
-                let mut replies = Vec::new();
-                let mut remaining = Vec::new();
-                for event in cs.inbox.drain(..) {
-                    match event {
-                        chat::ChatInbound::Reply { text, agent_name, .. } => {
-                            replies.push((text, agent_name));
-                        }
-                        other => remaining.push(other),
-                    }
-                }
-                cs.inbox = remaining;
+    // ── Unified tao event loop ─────────────────────────────────
+    use tao::event::{Event, StartCause, WindowEvent};
+    use tao::event_loop::{ControlFlow, EventLoopBuilder};
 
-                for (text, agent_name) in replies {
-                    let agent = agent_name.as_deref().unwrap_or("Agent");
-                    let preview: String = text.chars().take(100).collect();
-                    if config.widget.notifications {
-                        tray::send_chat_notification(
-                            &format!("{agent} replied: {preview}"),
-                            &tray_cmd_tx_hotkey,
-                        );
-                    }
-                    let name = agent_name.unwrap_or_else(|| "Agent".to_string());
-                    cs.messages.push(chat::ChatMessage {
-                        sender: chat::ChatSender::Agent(name.clone()),
-                        text: text.clone(),
-                    });
-                    while cs.messages.len() > 50 {
-                        cs.messages.remove(0);
-                    }
-                    cs.waiting_for_reply = false;
+    let event_loop = EventLoopBuilder::new().build();
 
-                    // Persist to history
-                    chat_history.push_message(
-                        &cs.conversation_key(),
-                        history::PersistedMessage {
-                            sender: "agent".to_string(),
-                            agent_name: Some(name),
-                            text,
-                        },
-                    );
-                }
-            }
-        }
+    event_loop.run(move |event, elwt, control_flow| {
+        *control_flow = ControlFlow::WaitUntil(
+            std::time::Instant::now() + std::time::Duration::from_millis(50),
+        );
 
-        // Debounced history save (every 2 seconds)
-        if last_history_save.elapsed() >= std::time::Duration::from_secs(2) {
-            chat_history.save_if_dirty();
-            last_history_save = std::time::Instant::now();
-        }
+        match event {
+            Event::NewEvents(StartCause::ResumeTimeReached { .. })
+            | Event::MainEventsCleared => {
+                // ── Tray menu events ──────────────────────────
+                tray.poll_menu_events();
 
-        while let Ok(update) = status_rx.try_recv() {
-            tray.update_status(
-                update.node_status,
-                &update.detail,
-                update.pid,
-                update.crash_loop,
-                update.stop_reason,
-            )?;
-            info!(
-                "status update: node={:?} crash_loop={} detail={}",
-                update.node_status, update.crash_loop, update.detail
-            );
-        }
+                // ── Global hotkey ─────────────────────────────
+                if let Ok(hk_event) = global_hotkey::GlobalHotKeyEvent::receiver().try_recv() {
+                    if hk_event.state == global_hotkey::HotKeyState::Pressed {
+                        let _ = tray_cmd_tx_hotkey.send(TrayCommand::OpenChat);
+                    }
+                }
 
-        while let Ok(cmd) = tray_cmd_rx.try_recv() {
-            match cmd {
-                TrayCommand::Refresh => {
-                    let _ = monitor_cmd_tx.send(MonitorCommand::Refresh);
-                }
-                TrayCommand::RestartNode => {
-                    let _ = monitor_cmd_tx.send(MonitorCommand::RestartNode);
-                }
-                TrayCommand::StopNode => {
-                    let _ = monitor_cmd_tx.send(MonitorCommand::StopNode);
-                }
-                TrayCommand::ToggleAutoRestart(enabled) => {
-                    let _ = monitor_cmd_tx.send(MonitorCommand::SetAutoRestart(enabled));
-                    tray.set_auto_restart(enabled);
-                }
-                TrayCommand::ToggleAutoStart(enabled) => match autostart::set_autostart(enabled) {
-                    Ok(()) => {
-                        tray.set_auto_start(enabled);
+                // ── Gateway events ────────────────────────────
+                while let Ok(event) = gateway_event_rx.try_recv() {
+                    if let Err(e) = tray.handle_gateway_event(&event) {
+                        error!("tray gateway event error: {e}");
                     }
-                    Err(err) => {
-                        error!("failed to toggle autostart: {err}");
-                        tray.set_auto_start(!enabled);
-                    }
-                },
-                TrayCommand::OpenGatewayUi => {
-                    // Open the first connection's gateway UI
-                    let conns = config.effective_connections();
-                    if let Some(conn) = conns.first() {
-                        let http_url = conn.gateway_url.replace("ws://", "http://").replace("wss://", "https://");
-                        info!("opening gateway UI: {http_url}");
-                        let _ = open::that(&http_url);
-                    }
-                }
-                TrayCommand::ViewLogs => {
-                    let base = dirs::home_dir()
-                        .map(|h| h.join(".openclaw"))
-                        .unwrap_or_default();
-                    let logs_dir = base.join("logs");
-                    let target = if logs_dir.exists() { logs_dir } else { base };
-                    info!("opening logs dir: {}", target.display());
-                    let _ = open::that(&target);
-                }
-                TrayCommand::Settings => {
-                    if let Some(saved_config) = settings::run_settings_window(&config)? {
-                        config = saved_config;
-                        tray.set_auto_restart(config.widget.auto_restart);
-                        tray.set_auto_start(autostart::effective_autostart(&config));
-                    }
-                }
-                TrayCommand::SetupWizard => {
-                    if let Some(saved_config) = wizard::run_setup_wizard(&config)? {
-                        config = saved_config;
-                        tray.set_auto_start(autostart::effective_autostart(&config));
-                    }
-                }
-                TrayCommand::CheckForUpdates => {
-                    let update_tx = tray_cmd_tx2.clone();
-                    tokio::spawn(async move {
-                        match update::check_for_updates().await {
-                            Some((version, url)) => {
-                                let body = format!("{} {version}\n{url}", i18n::t("notif_update_available"));
-                                tray::send_notification_public(&body);
-                                let _ = update_tx.send(TrayCommand::ShowDownloadButton(version));
-                            }
-                            None => {
-                                tray::send_notification_public(i18n::t("notif_up_to_date"));
-                            }
-                        }
-                    });
-                }
-                TrayCommand::DownloadUpdate(tag) => {
-                    tokio::spawn(async move {
-                        match update::download_and_install(&tag).await {
-                            Ok(()) => {
-                                tray::send_notification_public(
-                                    "Update installed — restart to apply",
+                    let _ = gateway_monitor_tx.send(event.clone());
+
+                    match &event {
+                        gateway::GatewayEvent::Latency { connection_name, ms } => {
+                            latency_tracker.push(*ms);
+                            if let Ok(mut cs) = chat_state.lock() {
+                                cs.add_log(
+                                    dashboard::LogLevel::Info,
+                                    connection_name,
+                                    &format!("Latency: {}ms", ms),
                                 );
                             }
-                            Err(e) => {
-                                error!("update download failed: {e}");
-                                tray::send_notification_public(&format!(
-                                    "Update failed: {e}"
-                                ));
+                        }
+                        gateway::GatewayEvent::Connected { connection_name, .. } => {
+                            if let Ok(mut cs) = chat_state.lock() {
+                                cs.add_log(
+                                    dashboard::LogLevel::Info,
+                                    connection_name,
+                                    "Connected",
+                                );
+                            }
+                            if config.widget.notifications {
+                                let focused = chat_state.lock().map(|cs| cs.window_focused).unwrap_or(true);
+                                if !focused && notification_limiter.allow(connection_name) {
+                                    tray::send_notification_public(&format!("{connection_name} reconnected"));
+                                }
                             }
                         }
-                    });
-                }
-                TrayCommand::OpenChat => {
-                    // Prefer plugin command senders map; fall back to gateway cmd
-                    let senders = plugin_registry.command_senders();
-                    if !senders.is_empty() {
-                        chat::run_chat_window_plugin(
-                            Arc::clone(&chat_state),
-                            senders,
-                        )?;
-                    } else if let Some(ref cmd_tx) = gateway_cmd_tx {
-                        chat::run_chat_window(
-                            Arc::clone(&chat_state),
-                            cmd_tx.clone(),
-                        )?;
-                    } else {
-                        tray::send_notification_public("No gateway connection for chat");
-                    }
-                }
-                TrayCommand::CopyDiagnostics => {
-                    let conns = config.effective_connections();
-                    let diag = tray.collect_diagnostics(&conns);
-                    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(diag)) {
-                        Ok(()) => {
-                            tray::send_notification_public(i18n::t("diagnostics_copied"));
+                        gateway::GatewayEvent::Disconnected { connection_name, reason } => {
+                            if let Ok(mut cs) = chat_state.lock() {
+                                cs.add_log(
+                                    dashboard::LogLevel::Warn,
+                                    connection_name,
+                                    &format!("Disconnected: {}", reason),
+                                );
+                            }
+                            if config.widget.notifications && notification_limiter.allow(connection_name) {
+                                tray::send_notification_public(&format!("{connection_name} disconnected"));
+                            }
                         }
-                        Err(e) => {
-                            error!("clipboard copy failed: {e}");
-                            tray::send_notification_public(&format!("Copy failed: {e}"));
+                        gateway::GatewayEvent::Error { connection_name, message } => {
+                            if let Ok(mut cs) = chat_state.lock() {
+                                cs.add_log(
+                                    dashboard::LogLevel::Error,
+                                    connection_name,
+                                    message,
+                                );
+                            }
+                            if config.widget.notifications && notification_limiter.allow(connection_name) {
+                                tray::send_notification_public(&format!("{connection_name} error: {message}"));
+                            }
+                        }
+                        gateway::GatewayEvent::NodeStatus { connection_name, online, node_name, .. } => {
+                            if let Ok(mut cs) = chat_state.lock() {
+                                let status = if *online { "online" } else { "offline" };
+                                let name = node_name.as_deref().unwrap_or("unknown");
+                                cs.add_log(
+                                    dashboard::LogLevel::Info,
+                                    connection_name,
+                                    &format!("Node {} is {}", name, status),
+                                );
+                            }
                         }
                     }
                 }
-                TrayCommand::ShowDownloadButton(tag) => {
-                    tray.show_download_update(&tag);
+
+                // ── Dashboard data (max 1/sec) ────────────────
+                if last_dashboard_push.elapsed() >= std::time::Duration::from_secs(1) {
+                    let statuses = plugin_registry.plugin_statuses();
+                    let plugin_types: Vec<(String, String, String)> = plugin_registry
+                        .all()
+                        .iter()
+                        .map(|p| (p.id().0.clone(), p.plugin_type().to_string(), p.icon().to_string()))
+                        .collect();
+                    let dash_data = dashboard::build_dashboard_data(
+                        &statuses,
+                        &plugin_types,
+                        &latency_tracker,
+                        start_time,
+                        Some(&health_tracker),
+                    );
+                    if let Ok(mut cs) = chat_state.lock() {
+                        cs.dashboard_data = dash_data;
+                    }
+                    last_dashboard_push = std::time::Instant::now();
                 }
-                TrayCommand::Uninstall => {
-                    if let Ok(true) = uninstall::confirm_uninstall() {
-                        let _ = uninstall::perform_uninstall();
-                        tray::send_notification_public(i18n::t("notif_uninstalled"));
-                        return Ok(());
+
+                // ── Chat: webview events OR background notifications ─
+                if chat_webview.is_some() {
+                    // Show notifications for replies while window is hidden
+                    let window_open = chat_state.lock().map(|s| s.window_open).unwrap_or(false);
+                    if !window_open && config.widget.notifications {
+                        if let Ok(cs) = chat_state.lock() {
+                            for inbox_event in &cs.inbox {
+                                if let chat::ChatInbound::Reply { text, agent_name, .. } = inbox_event {
+                                    let agent = agent_name.as_deref().unwrap_or("Agent");
+                                    let preview: String = text.chars().take(100).collect();
+                                    tray::send_chat_notification(
+                                        &format!("{agent} replied: {preview}"),
+                                        &tray_cmd_tx_hotkey,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    // Forward inbox to webview (keeps it in sync even when hidden)
+                    if let (Some(ref wv), Some(ref w)) = (&chat_webview, &chat_window) {
+                        chat::process_chat_events(&chat_state, wv, w);
+                    }
+                } else {
+                    // No webview — handle reply notifications in main loop
+                    if let Ok(mut cs) = chat_state.lock() {
+                        if !cs.window_open {
+                            let mut replies = Vec::new();
+                            let mut remaining = Vec::new();
+                            for inbox_event in cs.inbox.drain(..) {
+                                match inbox_event {
+                                    chat::ChatInbound::Reply { text, agent_name, .. } => {
+                                        replies.push((text, agent_name));
+                                    }
+                                    other => remaining.push(other),
+                                }
+                            }
+                            cs.inbox = remaining;
+
+                            for (text, agent_name) in replies {
+                                let agent = agent_name.as_deref().unwrap_or("Agent");
+                                let preview: String = text.chars().take(100).collect();
+                                if config.widget.notifications {
+                                    tray::send_chat_notification(
+                                        &format!("{agent} replied: {preview}"),
+                                        &tray_cmd_tx_hotkey,
+                                    );
+                                }
+                                let name = agent_name.unwrap_or_else(|| "Agent".to_string());
+                                cs.messages.push(chat::ChatMessage {
+                                    sender: chat::ChatSender::Agent(name.clone()),
+                                    text: text.clone(),
+                                });
+                                while cs.messages.len() > 50 {
+                                    cs.messages.remove(0);
+                                }
+                                cs.waiting_for_reply = false;
+
+                                chat_history.push_message(
+                                    &cs.conversation_key(),
+                                    history::PersistedMessage {
+                                        sender: "agent".to_string(),
+                                        agent_name: Some(name),
+                                        text,
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
-                TrayCommand::Exit => return Ok(()),
+
+                // ── History save (every 2s) ───────────────────
+                if last_history_save.elapsed() >= std::time::Duration::from_secs(2) {
+                    if let Ok(cs) = chat_state.lock() {
+                        cs.save_to_history(&mut chat_history);
+                    }
+                    chat_history.save_if_dirty();
+                    last_history_save = std::time::Instant::now();
+                }
+
+                // ── Status updates ────────────────────────────
+                while let Ok(update) = status_rx.try_recv() {
+                    if let Err(e) = tray.update_status(
+                        update.node_status,
+                        &update.detail,
+                        update.pid,
+                        update.crash_loop,
+                        update.stop_reason,
+                    ) {
+                        error!("tray status update error: {e}");
+                    }
+                    info!(
+                        "status update: node={:?} crash_loop={} detail={}",
+                        update.node_status, update.crash_loop, update.detail
+                    );
+                }
+
+                // ── Tray commands ─────────────────────────────
+                while let Ok(cmd) = tray_cmd_rx.try_recv() {
+                    match cmd {
+                        TrayCommand::Refresh => {
+                            let _ = monitor_cmd_tx.send(MonitorCommand::Refresh);
+                        }
+                        TrayCommand::RestartNode => {
+                            let _ = monitor_cmd_tx.send(MonitorCommand::RestartNode);
+                        }
+                        TrayCommand::StopNode => {
+                            let _ = monitor_cmd_tx.send(MonitorCommand::StopNode);
+                        }
+                        TrayCommand::ToggleAutoRestart(enabled) => {
+                            let _ = monitor_cmd_tx.send(MonitorCommand::SetAutoRestart(enabled));
+                            tray.set_auto_restart(enabled);
+                        }
+                        TrayCommand::ToggleAutoStart(enabled) => match autostart::set_autostart(enabled) {
+                            Ok(()) => {
+                                tray.set_auto_start(enabled);
+                            }
+                            Err(err) => {
+                                error!("failed to toggle autostart: {err}");
+                                tray.set_auto_start(!enabled);
+                            }
+                        },
+                        TrayCommand::OpenGatewayUi => {
+                            let conns = config.effective_connections();
+                            if let Some(conn) = conns.first() {
+                                let http_url = conn.gateway_url.replace("ws://", "http://").replace("wss://", "https://");
+                                info!("opening gateway UI: {http_url}");
+                                let _ = open::that(&http_url);
+                            }
+                        }
+                        TrayCommand::ViewLogs => {
+                            let base = dirs::home_dir()
+                                .map(|h| h.join(".openclaw"))
+                                .unwrap_or_default();
+                            let logs_dir = base.join("logs");
+                            let target = if logs_dir.exists() { logs_dir } else { base };
+                            info!("opening logs dir: {}", target.display());
+                            let _ = open::that(&target);
+                        }
+                        TrayCommand::Settings => {
+                            match settings::run_settings_window(&config) {
+                                Ok(Some(saved_config)) => {
+                                    config = saved_config;
+                                    tray.set_auto_restart(config.widget.auto_restart);
+                                    tray.set_auto_start(autostart::effective_autostart(&config));
+                                }
+                                Ok(None) => {}
+                                Err(e) => error!("settings window error: {e}"),
+                            }
+                        }
+                        TrayCommand::SetupWizard => {
+                            match wizard::run_setup_wizard(&config) {
+                                Ok(Some(saved_config)) => {
+                                    config = saved_config;
+                                    tray.set_auto_start(autostart::effective_autostart(&config));
+                                }
+                                Ok(None) => {}
+                                Err(e) => error!("setup wizard error: {e}"),
+                            }
+                        }
+                        TrayCommand::CheckForUpdates => {
+                            let update_tx = tray_cmd_tx2.clone();
+                            tokio::spawn(async move {
+                                match update::check_for_updates().await {
+                                    Some((version, url)) => {
+                                        let body = format!("{} {version}\n{url}", i18n::t("notif_update_available"));
+                                        tray::send_notification_public(&body);
+                                        let _ = update_tx.send(TrayCommand::ShowDownloadButton(version));
+                                    }
+                                    None => {
+                                        tray::send_notification_public(i18n::t("notif_up_to_date"));
+                                    }
+                                }
+                            });
+                        }
+                        TrayCommand::DownloadUpdate(tag) => {
+                            tokio::spawn(async move {
+                                match update::download_and_install(&tag).await {
+                                    Ok(()) => {
+                                        tray::send_notification_public(
+                                            "Update installed — restart to apply",
+                                        );
+                                    }
+                                    Err(e) => {
+                                        error!("update download failed: {e}");
+                                        tray::send_notification_public(&format!(
+                                            "Update failed: {e}"
+                                        ));
+                                    }
+                                }
+                            });
+                        }
+                        TrayCommand::OpenChat => {
+                            if chat_cmd_senders.is_empty() {
+                                tray::send_notification_public("No gateway connection for chat");
+                            } else if chat_window.is_none() {
+                                // First open: create Window + WebView
+                                let always_on_top = config.widget.always_on_top;
+                                match tao::window::WindowBuilder::new()
+                                    .with_title("\u{1f916} OpenClaw Chat")
+                                    .with_inner_size(tao::dpi::LogicalSize::new(420.0, 620.0))
+                                    .with_min_inner_size(tao::dpi::LogicalSize::new(380.0, 400.0))
+                                    .with_always_on_top(always_on_top)
+                                    .build(elwt)
+                                {
+                                    Ok(w) => {
+                                        match chat::create_chat_webview(
+                                            &w,
+                                            &chat_state,
+                                            Arc::clone(&chat_cmd_senders),
+                                        ) {
+                                            Ok(wv) => {
+                                                if let Ok(mut state) = chat_state.lock() {
+                                                    state.window_open = true;
+                                                    state.window_focused = true;
+                                                }
+                                                chat_window = Some(w);
+                                                chat_webview = Some(wv);
+                                            }
+                                            Err(e) => {
+                                                error!("failed to create webview: {e}");
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("failed to create chat window: {e}");
+                                    }
+                                }
+                            } else if let Some(ref w) = chat_window {
+                                // Re-show existing window
+                                w.set_visible(true);
+                                if let Ok(mut state) = chat_state.lock() {
+                                    state.window_open = true;
+                                    state.window_focused = true;
+                                }
+                            }
+                        }
+                        TrayCommand::CopyDiagnostics => {
+                            let conns = config.effective_connections();
+                            let diag = tray.collect_diagnostics(&conns);
+                            match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(diag)) {
+                                Ok(()) => {
+                                    tray::send_notification_public(i18n::t("diagnostics_copied"));
+                                }
+                                Err(e) => {
+                                    error!("clipboard copy failed: {e}");
+                                    tray::send_notification_public(&format!("Copy failed: {e}"));
+                                }
+                            }
+                        }
+                        TrayCommand::ShowDownloadButton(tag) => {
+                            tray.show_download_update(&tag);
+                        }
+                        TrayCommand::Uninstall => {
+                            if let Ok(true) = uninstall::confirm_uninstall() {
+                                let _ = uninstall::perform_uninstall();
+                                tray::send_notification_public(i18n::t("notif_uninstalled"));
+                                std::process::exit(0);
+                            }
+                        }
+                        TrayCommand::Exit => {
+                            std::process::exit(0);
+                        }
+                    }
+                }
+
+                // ── Plugin health checks (every 60s) ─────────
+                if last_health_check.elapsed() >= std::time::Duration::from_secs(60) {
+                    let results = plugin_registry.health_check_all();
+                    for (plugin_id, health) in &results {
+                        health_tracker.record(plugin_id, health.clone());
+                    }
+                    let statuses = plugin_registry.plugin_statuses();
+                    tray.update_plugin_statuses(&statuses);
+                    last_health_check = std::time::Instant::now();
+                }
+
+                // ── Tailscale status (every 60s) ──────────────
+                if last_tailscale_check.elapsed() >= std::time::Duration::from_secs(60) {
+                    let gw_urls: Vec<String> = config.effective_connections().iter().map(|c| c.gateway_url.clone()).collect();
+                    tray.update_tailscale_status(&gw_urls);
+                    last_tailscale_check = std::time::Instant::now();
+                }
             }
-        }
-
-        // Periodic plugin health checks (every 60s)
-        if last_health_check.elapsed() >= std::time::Duration::from_secs(60) {
-            let results = plugin_registry.health_check_all();
-            for (plugin_id, health) in &results {
-                health_tracker.record(plugin_id, health.clone());
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                // Hide the chat window instead of destroying it
+                if let Some(ref w) = chat_window {
+                    w.set_visible(false);
+                }
+                if let Ok(mut state) = chat_state.lock() {
+                    state.window_open = false;
+                    state.window_focused = false;
+                }
             }
-            // Update tray plugin statuses after health check
-            let statuses = plugin_registry.plugin_statuses();
-            tray.update_plugin_statuses(&statuses);
-            last_health_check = std::time::Instant::now();
+            _ => {}
         }
-
-        // Periodic Tailscale status check (every 60s)
-        if last_tailscale_check.elapsed() >= std::time::Duration::from_secs(60) {
-            let gw_urls: Vec<String> = config.effective_connections().iter().map(|c| c.gateway_url.clone()).collect();
-            tray.update_tailscale_status(&gw_urls);
-            last_tailscale_check = std::time::Instant::now();
-        }
-
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
+    });
 }
 
 async fn run_daemon(config: Config) -> error::Result<()> {
