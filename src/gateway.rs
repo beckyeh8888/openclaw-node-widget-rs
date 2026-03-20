@@ -900,12 +900,13 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
                 return;
             }
             // Filter by active agent session key (substring match for canonical keys)
+            // "main" matches "agent:main:telegram:direct:..." 
             let active_key = &cs.active_session_key;
-            if !active_key.is_empty()
-                && active_key != "main"
-                && !evt_key.contains(active_key.as_str())
-                && !active_key.contains(evt_key)
-            {
+            let is_match = active_key.is_empty()
+                || evt_key.contains(active_key.as_str())
+                || active_key.contains(evt_key)
+                || (active_key == "main" && evt_key.contains(":main:"));
+            if !is_match {
                 tracing::debug!(
                     evt_key,
                     active_key = active_key.as_str(),
