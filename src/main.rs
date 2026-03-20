@@ -675,20 +675,37 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                     });
                 }
                 TrayCommand::OpenChat => {
-                    // Prefer plugin command senders map; fall back to gateway cmd
-                    let senders = plugin_registry.command_senders();
-                    if !senders.is_empty() {
-                        chat::run_chat_window_plugin(
-                            Arc::clone(&chat_state),
-                            senders,
-                        )?;
-                    } else if let Some(ref cmd_tx) = gateway_cmd_tx {
-                        chat::run_chat_window(
-                            Arc::clone(&chat_state),
-                            cmd_tx.clone(),
-                        )?;
+                    // If the webview event loop is already alive (window was
+                    // hidden, not destroyed), just ask it to re-show.
+                    let alive = chat_state.lock().map(|s| s.event_loop_alive).unwrap_or(false);
+                    if alive {
+                        if let Ok(mut s) = chat_state.lock() {
+                            s.window_open = true;
+                        }
                     } else {
-                        tray::send_notification_public("No gateway connection for chat");
+                        // Spawn the webview on a separate thread so the tray
+                        // message pump keeps running. On Windows this is safe;
+                        // on macOS tao requires the main thread but the tray
+                        // icon itself runs on the main thread's message pump.
+                        let senders = plugin_registry.command_senders();
+                        if !senders.is_empty() {
+                            let cs = Arc::clone(&chat_state);
+                            std::thread::spawn(move || {
+                                if let Err(e) = chat::run_chat_window_plugin(cs, senders) {
+                                    tracing::error!("chat window error: {e}");
+                                }
+                            });
+                        } else if let Some(ref cmd_tx) = gateway_cmd_tx {
+                            let cs = Arc::clone(&chat_state);
+                            let tx = cmd_tx.clone();
+                            std::thread::spawn(move || {
+                                if let Err(e) = chat::run_chat_window(cs, tx) {
+                                    tracing::error!("chat window error: {e}");
+                                }
+                            });
+                        } else {
+                            tray::send_notification_public("No gateway connection for chat");
+                        }
                     }
                 }
                 TrayCommand::CopyDiagnostics => {
