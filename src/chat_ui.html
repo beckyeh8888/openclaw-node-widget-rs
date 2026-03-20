@@ -1548,16 +1548,22 @@ function streamStart(data) {
   scrollBottom();
 }
 
+var _streamScrollTimer = null;
 function streamChunk(data) {
   var ps = pendingStreams[data.id];
   if (!ps) return;
   ps.raw += data.text;
   var b = ps.el.querySelector(".bubble");
   if (b) {
-    b.setAttribute("data-raw", ps.raw);
-    b.textContent = ps.raw;
+    var prev = b.getAttribute("data-raw") || "";
+    if (ps.raw !== prev) {
+      b.setAttribute("data-raw", ps.raw);
+      b.textContent = ps.raw;
+    }
   }
-  scrollBottom();
+  // Debounce scroll to reduce flicker
+  if (_streamScrollTimer) clearTimeout(_streamScrollTimer);
+  _streamScrollTimer = setTimeout(function() { scrollBottom(); _streamScrollTimer = null; }, 80);
 }
 
 function streamEnd(data) {
