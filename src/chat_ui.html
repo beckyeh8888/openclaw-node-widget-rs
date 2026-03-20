@@ -675,6 +675,86 @@ body {
 }
 .settings-footer-btn.secondary:hover { background: #3d3d5c; }
 
+/* ── TTS controls ────────────────────────────────────── */
+.bubble-actions {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: -32px;
+  gap: 2px;
+}
+.msg.agent:hover .bubble-actions { display: flex; }
+.msg.agent { position: relative; }
+.tts-btn {
+  background: rgba(255,255,255,0.1);
+  border: none;
+  border-radius: 50%;
+  width: 24px; height: 24px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #aaa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.tts-btn:hover { background: rgba(255,255,255,0.2); color: #fff; }
+.tts-btn.speaking { color: #0084ff; }
+#ttsAutoBtn {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  color: #888;
+  padding: 2px 4px;
+  transition: color 0.15s;
+}
+#ttsAutoBtn:hover { color: #fff; }
+#ttsAutoBtn.active { color: #0084ff; }
+#ttsStopBtn {
+  display: none;
+  background: #ff4444;
+  border: none;
+  color: #fff;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+/* ── Slash command menu ──────────────────────────────── */
+#commandMenu {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 16px;
+  right: 16px;
+  background: #16213e;
+  border: 1px solid #3d3d5c;
+  border-radius: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 50;
+  margin-bottom: 4px;
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
+}
+#commandMenu.visible { display: block; }
+.cmd-item {
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+  font-size: 13px;
+}
+.cmd-item:first-child { border-radius: 10px 10px 0 0; }
+.cmd-item:last-child { border-radius: 0 0 10px 10px; }
+.cmd-item:hover, .cmd-item.selected { background: #2d2d44; }
+.cmd-name { color: #7eb8ff; font-weight: 600; font-family: monospace; }
+.cmd-desc { color: #888; font-size: 12px; }
+
 /* Modal overlay */
 .modal-overlay {
   display: none;
@@ -750,6 +830,8 @@ body {
       <select id="pluginSelect" style="display:none;background:#2d2d44;color:#fff;border:1px solid #3d3d5c;border-radius:8px;padding:3px 8px;font-size:13px;outline:none;cursor:pointer;max-width:120px;"></select>
       <div id="sessionTabs" class="session-tabs"></div>
       <select id="sessionSelect" style="display:none;"><option value="">main</option></select>
+      <button id="ttsAutoBtn" title="Auto-read messages">🔊</button>
+      <button id="ttsStopBtn" onclick="stopTts()">Stop</button>
       <span id="connectionStatus" class="status-disconnected">Not connected</span>
     </div>
 
@@ -766,7 +848,8 @@ body {
       <button class="remove-preview" onclick="clearPreview()">✕</button>
     </div>
 
-    <div id="inputBar">
+    <div id="inputBar" style="position:relative;">
+      <div id="commandMenu"></div>
       <button id="uploadBtn" title="Upload image">📎</button>
       <input type="text" id="messageInput" placeholder="Type a message..." disabled>
       <button id="sendBtn" disabled>▶</button>
@@ -1596,6 +1679,221 @@ document.getElementById("settingsResetBtn").addEventListener("click", function()
   window.ipc.postMessage(JSON.stringify({ type: "getSettings" }));
 });
 
+// ── TTS (Web Speech API) ─────────────────────────────────
+var ttsEnabled = true;
+var ttsAutoRead = false;
+var ttsRate = 1.0;
+var ttsVoice = "auto";
+var currentLang = "en";
+
+function speakText(text) {
+  if (!ttsEnabled || !window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  var plain = text.replace(/<[^>]+>/g, '').replace(/```[\s\S]*?```/g, '').replace(/[#*_~`>]/g, '').trim();
+  if (!plain) return;
+  var utterance = new SpeechSynthesisUtterance(plain);
+  utterance.lang = currentLang === 'zh-tw' ? 'zh-TW' : currentLang === 'zh-cn' ? 'zh-CN' : 'en-US';
+  utterance.rate = ttsRate;
+  if (ttsVoice !== "auto") {
+    var voices = speechSynthesis.getVoices();
+    for (var i = 0; i < voices.length; i++) {
+      if (voices[i].name === ttsVoice) { utterance.voice = voices[i]; break; }
+    }
+  }
+  document.getElementById("ttsStopBtn").style.display = "inline-block";
+  utterance.onend = function() { document.getElementById("ttsStopBtn").style.display = "none"; };
+  utterance.onerror = function() { document.getElementById("ttsStopBtn").style.display = "none"; };
+  speechSynthesis.speak(utterance);
+}
+
+function stopTts() {
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  document.getElementById("ttsStopBtn").style.display = "none";
+}
+
+document.getElementById("ttsAutoBtn").addEventListener("click", function() {
+  ttsAutoRead = !ttsAutoRead;
+  this.classList.toggle("active", ttsAutoRead);
+  window.ipc.postMessage(JSON.stringify({ type: "setTtsAutoRead", autoRead: ttsAutoRead }));
+});
+
+// Patch addMessage to add TTS button and auto-read
+var _origAddMessage = addMessage;
+addMessage = function(m) {
+  _origAddMessage(m);
+  if (m.sender === "agent" && ttsEnabled) {
+    var msgs = document.getElementById("messages");
+    var lastMsg = msgs.lastElementChild;
+    if (lastMsg && lastMsg.classList.contains("agent")) {
+      var actions = document.createElement("div");
+      actions.className = "bubble-actions";
+      var btn = document.createElement("button");
+      btn.className = "tts-btn";
+      btn.textContent = "🔊";
+      btn.title = "Read aloud";
+      btn.addEventListener("click", (function(txt) {
+        return function() { speakText(txt); };
+      })(m.text));
+      actions.appendChild(btn);
+      lastMsg.appendChild(actions);
+      if (ttsAutoRead) speakText(m.text);
+    }
+  }
+};
+
+// Patch streamEnd to add TTS button and auto-read for streamed messages
+var _origStreamEnd = streamEnd;
+streamEnd = function(data) {
+  var ps = pendingStreams[data.id];
+  var rawText = ps ? ps.raw : "";
+  _origStreamEnd(data);
+  if (ttsEnabled && rawText) {
+    var el = document.getElementById("stream-" + data.id);
+    if (el) {
+      var actions = document.createElement("div");
+      actions.className = "bubble-actions";
+      var btn = document.createElement("button");
+      btn.className = "tts-btn";
+      btn.textContent = "🔊";
+      btn.title = "Read aloud";
+      btn.addEventListener("click", function() { speakText(rawText); });
+      actions.appendChild(btn);
+      el.appendChild(actions);
+      if (ttsAutoRead) speakText(rawText);
+    }
+  }
+};
+
+// ── Slash commands ───────────────────────────────────────
+var slashCommands = [
+  { cmd: "/clear", desc: "Clear conversation" },
+  { cmd: "/export", desc: "Export as Markdown" },
+  { cmd: "/session", desc: "Switch session", hasArg: true },
+  { cmd: "/plugin", desc: "Switch plugin", hasArg: true },
+  { cmd: "/model", desc: "Set model", hasArg: true },
+  { cmd: "/system", desc: "Set system prompt", hasArg: true },
+  { cmd: "/help", desc: "Show commands" },
+  { cmd: "/voice", desc: "Toggle voice input" },
+  { cmd: "/tts", desc: "Toggle auto-read" }
+];
+var cmdSelectedIdx = 0;
+
+function showCommandMenu(query) {
+  var menu = document.getElementById("commandMenu");
+  var filtered = slashCommands.filter(function(c) {
+    return c.cmd.indexOf("/" + query) === 0;
+  });
+  if (!filtered.length) { hideCommandMenu(); return; }
+  cmdSelectedIdx = Math.min(cmdSelectedIdx, filtered.length - 1);
+  menu.innerHTML = "";
+  for (var i = 0; i < filtered.length; i++) {
+    var item = document.createElement("div");
+    item.className = "cmd-item" + (i === cmdSelectedIdx ? " selected" : "");
+    item.innerHTML = '<span class="cmd-name">' + escHtml(filtered[i].cmd) + '</span><span class="cmd-desc">' + escHtml(filtered[i].desc) + '</span>';
+    item.setAttribute("data-cmd", filtered[i].cmd);
+    item.setAttribute("data-has-arg", filtered[i].hasArg ? "1" : "");
+    item.addEventListener("click", (function(c) {
+      return function() { selectCommand(c); };
+    })(filtered[i]));
+    menu.appendChild(item);
+  }
+  menu.classList.add("visible");
+}
+
+function hideCommandMenu() {
+  document.getElementById("commandMenu").classList.remove("visible");
+  cmdSelectedIdx = 0;
+}
+
+function selectCommand(c) {
+  var inp = document.getElementById("messageInput");
+  if (c.hasArg) {
+    inp.value = c.cmd + " ";
+    inp.focus();
+  } else {
+    inp.value = "";
+    executeCommand(c.cmd, "");
+  }
+  hideCommandMenu();
+}
+
+function executeCommand(cmd, arg) {
+  switch (cmd) {
+    case "/clear":
+      document.getElementById("messages").innerHTML = '<div class="empty-state" id="emptyState">' + t("chat_empty") + '</div>';
+      window.ipc.postMessage(JSON.stringify({ type: "clearConversation" }));
+      break;
+    case "/export":
+      exportMarkdown();
+      break;
+    case "/session":
+      if (arg) switchSession(arg.trim());
+      break;
+    case "/plugin":
+      if (arg) {
+        var plugSel = document.getElementById("pluginSelect");
+        plugSel.value = arg.trim();
+        window.ipc.postMessage(JSON.stringify({ type: "switchPlugin", pluginId: arg.trim(), sessionKey: activeSessionKey }));
+      }
+      break;
+    case "/model":
+      if (arg) window.ipc.postMessage(JSON.stringify({ type: "setModel", model: arg.trim() }));
+      break;
+    case "/system":
+      if (arg) window.ipc.postMessage(JSON.stringify({ type: "setSystemPrompt", prompt: arg.trim() }));
+      break;
+    case "/help":
+      addMessage({ sender: "agent", agentName: "System", text: slashCommands.map(function(c) { return c.cmd + " — " + c.desc; }).join("\n") });
+      break;
+    case "/tts":
+      ttsAutoRead = !ttsAutoRead;
+      document.getElementById("ttsAutoBtn").classList.toggle("active", ttsAutoRead);
+      addMessage({ sender: "agent", agentName: "System", text: "Auto-read " + (ttsAutoRead ? "enabled" : "disabled") });
+      break;
+    default:
+      addMessage({ sender: "agent", agentName: "System", text: "Unknown command: " + cmd });
+  }
+}
+
+// Override sendMsg to intercept slash commands
+var _origSendMsg = sendMsg;
+sendMsg = function() {
+  var inp = document.getElementById("messageInput");
+  var text = inp.value.trim();
+  if (text.startsWith("/")) {
+    var parts = text.match(/^(\/\S+)\s*([\s\S]*)$/);
+    if (parts) {
+      inp.value = "";
+      hideCommandMenu();
+      updateSend();
+      executeCommand(parts[1], parts[2]);
+      return;
+    }
+  }
+  _origSendMsg();
+};
+
+// ── Chat export ──────────────────────────────────────────
+function exportMarkdown() {
+  var msgs = document.getElementById("messages");
+  var bubbles = msgs.querySelectorAll(".msg");
+  var md = "# Chat Export - " + new Date().toISOString() + "\n\n";
+  for (var i = 0; i < bubbles.length; i++) {
+    var el = bubbles[i];
+    if (el.classList.contains("empty-state")) continue;
+    var isUser = el.classList.contains("user");
+    var nameEl = el.querySelector(".agent-name");
+    var sender = isUser ? "**You**" : ("**" + (nameEl ? nameEl.textContent : "Agent") + "**");
+    var bubble = el.querySelector(".bubble");
+    var rawText = bubble ? (bubble.getAttribute("data-raw") || bubble.textContent || "") : "";
+    var tsEl = el.querySelector(".ts");
+    var ts = tsEl ? tsEl.textContent : "";
+    md += "### " + sender + (ts ? " (" + ts + ")" : "") + "\n" + rawText.trim() + "\n\n";
+  }
+  window.ipc.postMessage(JSON.stringify({ type: "export", format: "markdown", content: md }));
+  addMessage({ sender: "agent", agentName: "System", text: "Chat exported to Downloads folder." });
+}
+
 // ── Init ────────────────────────────────────────────────
 function init(data) {
   lang = data.lang || "en";
@@ -1612,6 +1910,15 @@ function init(data) {
   if (data.waitingForReply) setTyping(true);
   if (data.dashboard) updateDashboard(data.dashboard);
   if (data.logs && data.logs.length) updateLogs(data.logs);
+  if (data.tts) {
+    ttsEnabled = data.tts.enabled !== false;
+    ttsAutoRead = data.tts.auto_read || false;
+    ttsRate = data.tts.rate || 1.0;
+    ttsVoice = data.tts.voice || "auto";
+    if (ttsAutoRead) document.getElementById("ttsAutoBtn").classList.add("active");
+    if (!ttsEnabled) document.getElementById("ttsAutoBtn").style.display = "none";
+  }
+  currentLang = data.lang || "en";
   if (data.currentPage && data.currentPage !== "chat") navigateTo(data.currentPage);
   // Init session tabs with whatever sessions we have
   var sessionsForTabs = data.sessions && data.sessions.length ? data.sessions : [{ key: "main", name: "main" }];
@@ -1623,7 +1930,38 @@ document.getElementById("sendBtn").addEventListener("click", sendMsg);
 document.getElementById("messageInput").addEventListener("keydown", function(e) {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); }
 });
-document.getElementById("messageInput").addEventListener("input", updateSend);
+document.getElementById("messageInput").addEventListener("input", function(e) {
+  updateSend();
+  var val = e.target.value;
+  if (val.startsWith("/") && !val.includes(" ")) {
+    showCommandMenu(val.slice(1));
+  } else {
+    hideCommandMenu();
+  }
+});
+document.getElementById("messageInput").addEventListener("keydown", function(e) {
+  var menu = document.getElementById("commandMenu");
+  if (!menu.classList.contains("visible")) return;
+  var items = menu.querySelectorAll(".cmd-item");
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    cmdSelectedIdx = Math.min(cmdSelectedIdx + 1, items.length - 1);
+    for (var i = 0; i < items.length; i++) items[i].classList.toggle("selected", i === cmdSelectedIdx);
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    cmdSelectedIdx = Math.max(cmdSelectedIdx - 1, 0);
+    for (var i = 0; i < items.length; i++) items[i].classList.toggle("selected", i === cmdSelectedIdx);
+  } else if (e.key === "Tab") {
+    e.preventDefault();
+    if (items[cmdSelectedIdx]) {
+      var cmd = items[cmdSelectedIdx].getAttribute("data-cmd");
+      var hasArg = items[cmdSelectedIdx].getAttribute("data-has-arg");
+      document.getElementById("messageInput").value = cmd + (hasArg ? " " : "");
+      hideCommandMenu();
+      if (!hasArg) { sendMsg(); }
+    }
+  }
+});
 document.getElementById("uploadBtn").addEventListener("click", function() {
   document.getElementById("fileInput").click();
 });
