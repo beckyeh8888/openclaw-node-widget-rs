@@ -104,6 +104,13 @@ pub struct LogConfig {
     pub syslog: bool,
 }
 
+/// Subset of settings exposed via the Settings UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeneralSettings {
+    pub language: String,
+    pub auto_start: bool,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -334,6 +341,29 @@ impl Config {
         }
 
         Ok(config)
+    }
+
+    /// Add or update a plugin by name. If a plugin with the same name exists,
+    /// it is replaced; otherwise the new plugin is appended.
+    pub fn upsert_plugin(&mut self, plugin: PluginConfig) {
+        if let Some(existing) = self.plugins.iter_mut().find(|p| p.name == plugin.name) {
+            *existing = plugin;
+        } else {
+            self.plugins.push(plugin);
+        }
+    }
+
+    /// Remove a plugin by name. Returns true if a plugin was removed.
+    pub fn remove_plugin(&mut self, name: &str) -> bool {
+        let before = self.plugins.len();
+        self.plugins.retain(|p| p.name != name);
+        self.plugins.len() < before
+    }
+
+    /// Update general settings from a JSON-friendly struct.
+    pub fn apply_general_settings(&mut self, general: &GeneralSettings) {
+        self.widget.language = general.language.clone();
+        self.startup.auto_start = general.auto_start;
     }
 
     pub fn save(&self) -> Result<()> {

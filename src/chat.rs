@@ -4,6 +4,7 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tracing::warn;
 
+use crate::config::{Config, GeneralSettings, PluginConfig};
 use crate::dashboard::{DashboardData, LogBuffer, LogEntry, LogLevel};
 use crate::gateway::{ChatAttachment, ChatSessionInfo, GatewayCommand};
 use crate::i18n;
@@ -68,6 +69,7 @@ pub struct ChatState {
     pub dashboard_data: DashboardData,
     pub log_buffer: LogBuffer,
     pub current_page: String,
+    pub settings_requested: bool,
 }
 
 impl ChatState {
@@ -85,6 +87,7 @@ impl ChatState {
             dashboard_data: DashboardData::new(),
             log_buffer: LogBuffer::new(),
             current_page: "chat".to_string(),
+            settings_requested: false,
         }
     }
 
@@ -276,7 +279,7 @@ fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
     .to_string()
 }
 
-fn handle_ipc_message(
+pub fn handle_ipc_message(
     body: &str,
     cmd_tx: &mpsc::UnboundedSender<PluginCommand>,
     chat_state: &Arc<Mutex<ChatState>>,
@@ -377,6 +380,67 @@ fn handle_ipc_message(
                 .to_string();
             if let Ok(mut state) = chat_state.lock() {
                 state.current_page = page;
+            }
+        }
+        "getSettings" => {
+            // Handled via webview eval in process_inbox; push settings data
+            if let Ok(mut state) = chat_state.lock() {
+                state.settings_requested = true;
+            }
+        }
+        "savePlugin" => {
+            let plugin_json = msg.get("plugin");
+            if let Some(pj) = plugin_json {
+                let pc = PluginConfig {
+                    plugin_type: pj.get("type").and_then(|v| v.as_str()).unwrap_or("openclaw").to_string(),
+                    name: pj.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    url: pj.get("url").and_then(|v| v.as_str()).map(String::from),
+                    token: pj.get("token").and_then(|v| v.as_str()).map(String::from),
+                    model: pj.get("model").and_then(|v| v.as_str()).map(String::from),
+                    api_key: pj.get("apiKey").and_then(|v| v.as_str()).map(String::from),
+                    webhook_url: pj.get("webhookUrl").and_then(|v| v.as_str()).map(String::from),
+                    poll_url: pj.get("pollUrl").and_then(|v| v.as_str()).map(String::from),
+                };
+                if !pc.name.is_empty() {
+                    match Config::load() {
+                        Ok(mut config) => {
+                            config.upsert_plugin(pc);
+                            if let Err(e) = config.save() {
+                                warn!("failed to save plugin config: {e}");
+                            }
+                        }
+                        Err(e) => warn!("failed to load config for savePlugin: {e}"),
+                    }
+                }
+            }
+        }
+        "deletePlugin" => {
+            let name = msg.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if !name.is_empty() {
+                match Config::load() {
+                    Ok(mut config) => {
+                        config.remove_plugin(name);
+                        if let Err(e) = config.save() {
+                            warn!("failed to save config after deletePlugin: {e}");
+                        }
+                    }
+                    Err(e) => warn!("failed to load config for deletePlugin: {e}"),
+                }
+            }
+        }
+        "saveGeneral" => {
+            let general = GeneralSettings {
+                language: msg.get("language").and_then(|v| v.as_str()).unwrap_or("auto").to_string(),
+                auto_start: msg.get("autoStart").and_then(|v| v.as_bool()).unwrap_or(false),
+            };
+            match Config::load() {
+                Ok(mut config) => {
+                    config.apply_general_settings(&general);
+                    if let Err(e) = config.save() {
+                        warn!("failed to save general settings: {e}");
+                    }
+                }
+                Err(e) => warn!("failed to load config for saveGeneral: {e}"),
             }
         }
         _ => {
@@ -493,6 +557,45 @@ fn process_inbox_to_webview(
                 "if(typeof updateDashboard==='function')updateDashboard({})",
                 dashboard_json
             ));
+        }
+    }
+
+    // Push settings data to WebView if requested
+    if state.settings_requested || state.current_page == "settings" {
+        state.settings_requested = false;
+        match Config::load() {
+            Ok(config) => {
+                let plugins_json: Vec<serde_json::Value> = config
+                    .effective_plugins()
+                    .iter()
+                    .map(|p| {
+                        json!({
+                            "type": p.plugin_type,
+                            "name": p.name,
+                            "url": p.url,
+                            "token": p.token,
+                            "model": p.model,
+                            "apiKey": p.api_key,
+                            "webhookUrl": p.webhook_url,
+                            "pollUrl": p.poll_url,
+                        })
+                    })
+                    .collect();
+                let settings_data = json!({
+                    "plugins": plugins_json,
+                    "general": {
+                        "language": config.widget.language,
+                        "autoStart": config.startup.auto_start,
+                    }
+                });
+                let _ = webview.evaluate_script(&format!(
+                    "if(typeof updateSettings==='function')updateSettings({})",
+                    settings_data
+                ));
+            }
+            Err(e) => {
+                tracing::warn!("failed to load config for settings page: {e}");
+            }
         }
     }
 

@@ -232,6 +232,9 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
             "openai-compatible" => {
                 plugin_registry.register(Box::new(plugin::openai_compat::OpenAICompatPlugin::new(plugin_cfg, Arc::clone(&chat_state))));
             }
+            "n8n" => {
+                plugin_registry.register(Box::new(plugin::n8n::N8nPlugin::new(plugin_cfg, Arc::clone(&chat_state))));
+            }
             other => {
                 tracing::warn!(plugin_type = other, "unknown plugin type — skipping");
             }
