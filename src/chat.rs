@@ -7,6 +7,7 @@ use tracing::warn;
 use crate::config::{Config, GeneralSettings, PluginConfig};
 use crate::dashboard::{DashboardData, LogBuffer, LogEntry, LogLevel};
 use crate::gateway::{ChatAttachment, ChatSessionInfo, GatewayCommand};
+use crate::history::{ChatHistory, PersistedMessage};
 use crate::i18n;
 use crate::plugin::PluginCommand;
 
@@ -70,6 +71,10 @@ pub struct ChatState {
     pub log_buffer: LogBuffer,
     pub current_page: String,
     pub settings_requested: bool,
+    /// Currently active plugin ID (for multi-plugin support).
+    pub active_plugin_id: Option<String>,
+    /// Currently active session key within the active plugin.
+    pub active_session_key: String,
 }
 
 impl ChatState {
@@ -88,7 +93,74 @@ impl ChatState {
             log_buffer: LogBuffer::new(),
             current_page: "chat".to_string(),
             settings_requested: false,
+            active_plugin_id: None,
+            active_session_key: "main".to_string(),
         }
+    }
+
+    /// Build the conversation key for the current active plugin + session.
+    pub fn conversation_key(&self) -> String {
+        let plugin = self.active_plugin_id.as_deref().unwrap_or("default");
+        ChatHistory::conversation_key(plugin, &self.active_session_key)
+    }
+
+    /// Load messages from history for the current conversation.
+    pub fn load_from_history(&mut self, history: &ChatHistory) {
+        let key = self.conversation_key();
+        let persisted = history.get_messages(&key);
+        self.messages = persisted
+            .iter()
+            .map(|pm| ChatMessage {
+                sender: if pm.sender == "user" {
+                    ChatSender::User
+                } else {
+                    ChatSender::Agent(
+                        pm.agent_name.clone().unwrap_or_else(|| "Agent".to_string()),
+                    )
+                },
+                text: pm.text.clone(),
+            })
+            .collect();
+    }
+
+    /// Persist current messages to history.
+    pub fn save_to_history(&self, history: &mut ChatHistory) {
+        let key = self.conversation_key();
+        let persisted: Vec<PersistedMessage> = self
+            .messages
+            .iter()
+            .map(|m| PersistedMessage {
+                sender: match &m.sender {
+                    ChatSender::User => "user".to_string(),
+                    ChatSender::Agent(_) => "agent".to_string(),
+                },
+                agent_name: match &m.sender {
+                    ChatSender::Agent(name) => Some(name.clone()),
+                    _ => None,
+                },
+                text: m.text.clone(),
+            })
+            .collect();
+        history.set_messages(&key, persisted);
+    }
+
+    /// Switch to a different plugin + session, saving current and loading new.
+    pub fn switch_conversation(
+        &mut self,
+        history: &mut ChatHistory,
+        plugin_id: &str,
+        session_key: &str,
+    ) {
+        // Save current conversation
+        self.save_to_history(history);
+        // Switch IDs
+        self.active_plugin_id = Some(plugin_id.to_string());
+        self.active_session_key = session_key.to_string();
+        self.selected_session = Some(session_key.to_string());
+        // Load new conversation
+        self.load_from_history(history);
+        self.pending_stream = None;
+        self.waiting_for_reply = false;
     }
 
     /// Add a log entry to the buffer.
@@ -275,6 +347,8 @@ fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
         "dashboard": state.dashboard_data,
         "logs": log_entries,
         "currentPage": state.current_page,
+        "activePluginId": state.active_plugin_id,
+        "activeSessionKey": state.active_session_key,
     })
     .to_string()
 }
@@ -352,6 +426,25 @@ pub fn handle_ipc_message(
                 .map(String::from);
             if let Ok(mut state) = chat_state.lock() {
                 state.selected_session = session_key;
+            }
+        }
+        "switchPlugin" => {
+            let plugin_id = msg
+                .get("pluginId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let session_key = msg
+                .get("sessionKey")
+                .and_then(|v| v.as_str())
+                .unwrap_or("main")
+                .to_string();
+            if !plugin_id.is_empty() {
+                if let Ok(mut state) = chat_state.lock() {
+                    state.active_plugin_id = Some(plugin_id);
+                    state.active_session_key = session_key.clone();
+                    state.selected_session = Some(session_key);
+                }
             }
         }
         "listSessions" => {

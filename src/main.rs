@@ -7,6 +7,7 @@ mod config;
 pub mod dashboard;
 mod error;
 mod gateway;
+mod history;
 mod i18n;
 mod install;
 mod markdown;
@@ -31,11 +32,39 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     config::{config_path, Config},
+    history::ChatHistory,
     lock::{try_acquire_lock, AcquireResult},
     monitor::{spawn_monitor, MonitorCommand},
     plugin::registry::PluginRegistry,
     tray::{TrayCommand, TrayState},
 };
+
+/// Rate-limiter for plugin notifications.
+struct NotificationLimiter {
+    last_notify: std::collections::HashMap<String, std::time::Instant>,
+    cooldown: std::time::Duration,
+}
+
+impl NotificationLimiter {
+    fn new(cooldown_secs: u64) -> Self {
+        Self {
+            last_notify: std::collections::HashMap::new(),
+            cooldown: std::time::Duration::from_secs(cooldown_secs),
+        }
+    }
+
+    /// Returns true if a notification is allowed for this plugin.
+    fn allow(&mut self, plugin_id: &str) -> bool {
+        let now = std::time::Instant::now();
+        if let Some(last) = self.last_notify.get(plugin_id) {
+            if now.duration_since(*last) < self.cooldown {
+                return false;
+            }
+        }
+        self.last_notify.insert(plugin_id.to_string(), now);
+        true
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(name = "openclaw-node-widget")]
@@ -211,6 +240,9 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     let (gateway_monitor_tx, gateway_monitor_rx) = mpsc::unbounded_channel();
 
     let chat_state = Arc::new(Mutex::new(chat::ChatState::new()));
+    let mut chat_history = ChatHistory::load();
+    let mut notification_limiter = NotificationLimiter::new(30);
+    let mut last_history_save = std::time::Instant::now();
     let start_time = std::time::Instant::now();
     let mut latency_tracker = dashboard::LatencyTracker::new();
     let mut last_dashboard_push = std::time::Instant::now();
@@ -238,6 +270,15 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
             other => {
                 tracing::warn!(plugin_type = other, "unknown plugin type — skipping");
             }
+        }
+    }
+
+    // Set active plugin ID on chat state
+    if let Some(active_id) = plugin_registry.active_id() {
+        if let Ok(mut cs) = chat_state.lock() {
+            cs.active_plugin_id = Some(active_id.to_string());
+            // Load saved history for the initial conversation
+            cs.load_from_history(&chat_history);
         }
     }
 
@@ -397,6 +438,13 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                             "Connected",
                         );
                     }
+                    // Notify on reconnection (if window not focused)
+                    if config.widget.notifications {
+                        let focused = chat_state.lock().map(|cs| cs.window_focused).unwrap_or(true);
+                        if !focused && notification_limiter.allow(connection_name) {
+                            tray::send_notification_public(&format!("{connection_name} reconnected"));
+                        }
+                    }
                 }
                 gateway::GatewayEvent::Disconnected { connection_name, reason } => {
                     if let Ok(mut cs) = chat_state.lock() {
@@ -406,6 +454,10 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                             &format!("Disconnected: {}", reason),
                         );
                     }
+                    // Notify on disconnect
+                    if config.widget.notifications && notification_limiter.allow(connection_name) {
+                        tray::send_notification_public(&format!("{connection_name} disconnected"));
+                    }
                 }
                 gateway::GatewayEvent::Error { connection_name, message } => {
                     if let Ok(mut cs) = chat_state.lock() {
@@ -414,6 +466,10 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                             connection_name,
                             message,
                         );
+                    }
+                    // Notify on error
+                    if config.widget.notifications && notification_limiter.allow(connection_name) {
+                        tray::send_notification_public(&format!("{connection_name} error: {message}"));
                     }
                 }
                 gateway::GatewayEvent::NodeStatus { connection_name, online, node_name, .. } => {
@@ -469,18 +525,36 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                 for (text, agent_name) in replies {
                     let agent = agent_name.as_deref().unwrap_or("Agent");
                     let preview: String = text.chars().take(100).collect();
-                    tray::send_notification_public(&format!("{agent} replied: {preview}"));
+                    if config.widget.notifications {
+                        tray::send_notification_public(&format!("{agent} replied: {preview}"));
+                    }
                     let name = agent_name.unwrap_or_else(|| "Agent".to_string());
                     cs.messages.push(chat::ChatMessage {
-                        sender: chat::ChatSender::Agent(name),
-                        text,
+                        sender: chat::ChatSender::Agent(name.clone()),
+                        text: text.clone(),
                     });
                     while cs.messages.len() > 50 {
                         cs.messages.remove(0);
                     }
                     cs.waiting_for_reply = false;
+
+                    // Persist to history
+                    chat_history.push_message(
+                        &cs.conversation_key(),
+                        history::PersistedMessage {
+                            sender: "agent".to_string(),
+                            agent_name: Some(name),
+                            text,
+                        },
+                    );
                 }
             }
+        }
+
+        // Debounced history save (every 2 seconds)
+        if last_history_save.elapsed() >= std::time::Duration::from_secs(2) {
+            chat_history.save_if_dirty();
+            last_history_save = std::time::Instant::now();
         }
 
         while let Ok(update) = status_rx.try_recv() {
