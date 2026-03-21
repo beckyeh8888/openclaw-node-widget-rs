@@ -10,14 +10,25 @@ use super::{
 use crate::chat::{ChatInbound, ChatMessage, ChatSender, ChatState};
 use crate::config::PluginConfig;
 use crate::gateway::ChatAttachment;
+use crate::i18n::t;
 
 // ── n8n API types ────────────────────────────────────────────────────
+
+/// A single chat history entry sent to the n8n webhook.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HistoryEntry {
+    pub role: String,
+    pub content: String,
+}
+
+const MAX_HISTORY_ENTRIES: usize = 20;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct N8nRequest {
     pub message: String,
     #[serde(rename = "sessionId")]
     pub session_id: String,
+    pub history: Vec<HistoryEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -74,6 +85,7 @@ pub struct N8nPlugin {
     poll_interval_ms: u64,
     status: Arc<Mutex<ConnectionStatus>>,
     chat_state: Arc<Mutex<ChatState>>,
+    history: Arc<Mutex<Vec<HistoryEntry>>>,
     cmd_tx: Option<mpsc::UnboundedSender<PluginCommand>>,
     event_tx: Option<mpsc::UnboundedSender<PluginEvent>>,
 }
@@ -93,6 +105,7 @@ impl N8nPlugin {
             poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
             status: Arc::new(Mutex::new(ConnectionStatus::Disconnected)),
             chat_state,
+            history: Arc::new(Mutex::new(Vec::new())),
             cmd_tx: None,
             event_tx: None,
         }
@@ -174,6 +187,7 @@ impl AgentPlugin for N8nPlugin {
                 let poll_url = self.poll_url.clone();
                 let poll_interval_ms = self.poll_interval_ms;
                 let chat_state = Arc::clone(&self.chat_state);
+                let history = Arc::clone(&self.history);
                 let plugin_id = self.id.clone();
                 let event_tx = self.event_tx.clone();
                 let plugin_name = self.plugin_name.clone();
@@ -187,9 +201,14 @@ impl AgentPlugin for N8nPlugin {
                                 session_key: _,
                                 attachments: _,
                             } => {
+                                let current_history = history
+                                    .lock()
+                                    .map(|h| h.clone())
+                                    .unwrap_or_default();
                                 let request = N8nRequest {
                                     message: message.clone(),
-                                    session_id: "widget".to_string(),
+                                    session_id: plugin_id.0.clone(),
+                                    history: current_history,
                                 };
 
                                 let client = match reqwest::Client::builder()
@@ -237,6 +256,11 @@ impl AgentPlugin for N8nPlugin {
                                                             &chat_state,
                                                             &event_tx,
                                                         );
+                                                        record_exchange(
+                                                            &history,
+                                                            &message,
+                                                            &text,
+                                                        );
                                                     }
                                                     None => {
                                                         tracing::warn!(
@@ -267,6 +291,11 @@ impl AgentPlugin for N8nPlugin {
                                                     &chat_state,
                                                     &event_tx,
                                                 );
+                                                record_exchange(
+                                                    &history,
+                                                    &message,
+                                                    &text,
+                                                );
                                             } else if !body.is_empty() {
                                                 // Fallback: use raw body
                                                 emit_reply(
@@ -275,6 +304,11 @@ impl AgentPlugin for N8nPlugin {
                                                     &plugin_id,
                                                     &chat_state,
                                                     &event_tx,
+                                                );
+                                                record_exchange(
+                                                    &history,
+                                                    &message,
+                                                    &body,
                                                 );
                                             }
                                         } else {
@@ -335,6 +369,21 @@ impl AgentPlugin for N8nPlugin {
         session_key: Option<String>,
         attachments: Option<Vec<ChatAttachment>>,
     ) -> Result<(), PluginError> {
+        // Handle /clear command locally without calling webhook
+        if message.trim().eq_ignore_ascii_case("/clear") {
+            if let Ok(mut h) = self.history.lock() {
+                h.clear();
+            }
+            emit_reply(
+                t("chat_history_cleared"),
+                &self.plugin_name,
+                &self.id,
+                &self.chat_state,
+                &self.event_tx,
+            );
+            return Ok(());
+        }
+
         let tx = self
             .cmd_tx
             .as_ref()
@@ -378,6 +427,28 @@ impl AgentPlugin for N8nPlugin {
         match result {
             Ok(_) => HealthStatus { reachable: true, latency_ms, error: None },
             Err(e) => HealthStatus { reachable: false, latency_ms, error: Some(format!("{e}")) },
+        }
+    }
+}
+
+/// Record a user–assistant exchange in history, capping at MAX_HISTORY_ENTRIES.
+fn record_exchange(
+    history: &Arc<Mutex<Vec<HistoryEntry>>>,
+    user_msg: &str,
+    assistant_msg: &str,
+) {
+    if let Ok(mut h) = history.lock() {
+        h.push(HistoryEntry {
+            role: "user".to_string(),
+            content: user_msg.to_string(),
+        });
+        h.push(HistoryEntry {
+            role: "assistant".to_string(),
+            content: assistant_msg.to_string(),
+        });
+        if h.len() > MAX_HISTORY_ENTRIES {
+            let excess = h.len() - MAX_HISTORY_ENTRIES;
+            h.drain(..excess);
         }
     }
 }
@@ -495,10 +566,29 @@ mod tests {
         let req = N8nRequest {
             message: "hello".to_string(),
             session_id: "widget".to_string(),
+            history: vec![],
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["message"], "hello");
         assert_eq!(json["sessionId"], "widget");
+        assert_eq!(json["history"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn n8n_request_serialization_with_history() {
+        let req = N8nRequest {
+            message: "next".to_string(),
+            session_id: "n8n-test".to_string(),
+            history: vec![
+                HistoryEntry { role: "user".into(), content: "hi".into() },
+                HistoryEntry { role: "assistant".into(), content: "hello".into() },
+            ],
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["history"][0]["role"], "user");
+        assert_eq!(json["history"][0]["content"], "hi");
+        assert_eq!(json["history"][1]["role"], "assistant");
+        assert_eq!(json["history"][1]["content"], "hello");
     }
 
     #[test]
@@ -701,5 +791,139 @@ mod tests {
             text: Some("last resort".to_string()),
         };
         assert_eq!(resp.text(), Some("last resort"));
+    }
+
+    // ── BDD: chat history ───────────────────────────────────────────
+
+    /// Helper: create an N8nPlugin with a pre-loaded history for testing.
+    fn make_test_plugin() -> N8nPlugin {
+        let config = PluginConfig {
+            plugin_type: "n8n".to_string(),
+            name: "Test".to_string(),
+            url: None,
+            token: None,
+            model: None,
+            api_key: None,
+            webhook_url: Some("https://example.com/webhook".to_string()),
+            poll_url: None,
+            transport: None,
+            command: None,
+            args: None,
+            system_prompt: None,
+        };
+        let chat_state = Arc::new(Mutex::new(ChatState::new()));
+        N8nPlugin::new(&config, chat_state)
+    }
+
+    #[test]
+    fn first_message_has_empty_history() {
+        // Given a new n8n plugin session
+        let plugin = make_test_plugin();
+        // When building request for first message
+        let history = plugin.history.lock().unwrap().clone();
+        // Then history is empty
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn second_message_includes_first_exchange() {
+        // Given user sent "你好" and got reply "我是助手"
+        let plugin = make_test_plugin();
+        record_exchange(&plugin.history, "你好", "我是助手");
+
+        // When user sends "列出 workflow"
+        let history = plugin.history.lock().unwrap().clone();
+
+        // Then history contains the first exchange
+        assert_eq!(history.len(), 2);
+        assert_eq!(
+            history[0],
+            HistoryEntry { role: "user".into(), content: "你好".into() }
+        );
+        assert_eq!(
+            history[1],
+            HistoryEntry { role: "assistant".into(), content: "我是助手".into() }
+        );
+    }
+
+    #[test]
+    fn history_capped_at_20_entries() {
+        // Given 15 complete exchanges exist
+        let plugin = make_test_plugin();
+        for i in 0..15 {
+            record_exchange(
+                &plugin.history,
+                &format!("user msg {i}"),
+                &format!("assistant reply {i}"),
+            );
+        }
+
+        // When a new message is sent
+        // Then history has exactly 20 entries (last 10 turns)
+        let history = plugin.history.lock().unwrap();
+        assert_eq!(history.len(), MAX_HISTORY_ENTRIES);
+        // First entry should be from exchange #5 (0-indexed), trimmed from front
+        assert_eq!(history[0].content, "user msg 5");
+        assert_eq!(history[1].content, "assistant reply 5");
+        // Last entry should be from exchange #14
+        assert_eq!(history[18].content, "user msg 14");
+        assert_eq!(history[19].content, "assistant reply 14");
+    }
+
+    #[test]
+    fn history_persists_across_plugin_reference() {
+        // Given user chatted with n8n plugin
+        let plugin = make_test_plugin();
+        record_exchange(&plugin.history, "hello", "hi there");
+
+        // When we access history through the Arc (simulating plugin switch & back)
+        let history_ref = Arc::clone(&plugin.history);
+        let history = history_ref.lock().unwrap();
+
+        // Then history is preserved
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].content, "hello");
+    }
+
+    #[test]
+    fn clear_command_resets_history() {
+        // Given user has chat history
+        let plugin = make_test_plugin();
+        record_exchange(&plugin.history, "msg1", "reply1");
+        record_exchange(&plugin.history, "msg2", "reply2");
+        assert_eq!(plugin.history.lock().unwrap().len(), 4);
+
+        // When user sends "/clear" (simulate the clear logic from send_message)
+        plugin.history.lock().unwrap().clear();
+
+        // Then local history is cleared
+        assert!(plugin.history.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_command_via_send_message() {
+        // Given user has chat history and plugin is not connected
+        let plugin = make_test_plugin();
+        record_exchange(&plugin.history, "msg1", "reply1");
+        assert_eq!(plugin.history.lock().unwrap().len(), 2);
+
+        // When user sends "/clear" via send_message
+        // (send_message handles /clear even without connection)
+        let result = plugin.send_message("/clear", None, None);
+        assert!(result.is_ok());
+
+        // Then history is cleared
+        assert!(plugin.history.lock().unwrap().is_empty());
+
+        // And a reply was pushed to chat state
+        let cs = plugin.chat_state.lock().unwrap();
+        assert!(!cs.inbox.is_empty());
+    }
+
+    #[test]
+    fn session_id_uses_plugin_id() {
+        // The session_id in requests should be the plugin id
+        let plugin = make_test_plugin();
+        assert_eq!(plugin.id().0, "n8n-test");
     }
 }

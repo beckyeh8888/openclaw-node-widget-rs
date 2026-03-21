@@ -297,6 +297,7 @@ fn en(key: &str) -> &str {
         "chat_empty" => "No messages yet",
         "chat_typing" => "Typing...",
         "chat_not_connected" => "Not connected",
+        "chat_history_cleared" => "History cleared",
 
         // Agent Switcher
         "agent_select" => "Select Agent",
@@ -463,6 +464,7 @@ fn zh_tw(key: &str) -> Option<&'static str> {
         "chat_empty" => "尚無訊息",
         "chat_typing" => "輸入中...",
         "chat_not_connected" => "未連線",
+        "chat_history_cleared" => "對話紀錄已清除",
 
         // Agent Switcher
         "agent_select" => "選擇代理",
@@ -623,6 +625,7 @@ fn zh_cn(key: &str) -> Option<&'static str> {
         "chat_empty" => "暂无消息",
         "chat_typing" => "输入中...",
         "chat_not_connected" => "未连接",
+        "chat_history_cleared" => "对话记录已清除",
 
         // Agent Switcher
         "agent_select" => "选择代理",
