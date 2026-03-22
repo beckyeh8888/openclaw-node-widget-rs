@@ -413,6 +413,7 @@ impl AgentPlugin for OpenAICompatPlugin {
                                             text: full_text.clone(),
                                             agent_name: Some(model.clone()),
                                             usage: token_usage.clone(),
+                                            attachments: None,
                                         });
                                         cs.waiting_for_reply = false;
                                     }
@@ -427,6 +428,8 @@ impl AgentPlugin for OpenAICompatPlugin {
                                                         model.clone(),
                                                     ),
                                                     text: full_text,
+                                                    media_path: None,
+                                                    media_type: None,
                                                 },
                                                 token_usage,
                                             ),

@@ -12,6 +12,7 @@ mod i18n;
 mod install;
 mod markdown;
 mod lock;
+mod media;
 mod monitor;
 pub mod plugin;
 mod process;
@@ -241,6 +242,9 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     let (gateway_monitor_tx, gateway_monitor_rx) = mpsc::unbounded_channel();
 
     let chat_state = Arc::new(Mutex::new(chat::ChatState::new()));
+    if let Ok(mut cs) = chat_state.lock() {
+        cs.media_store = media::MediaStore::new();
+    }
     let mut chat_history = ChatHistory::load();
     let mut notification_limiter = NotificationLimiter::new(30);
     let mut last_history_save = std::time::Instant::now();
@@ -603,6 +607,8 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                                 cs.messages.push(chat::ChatMessage {
                                     sender: chat::ChatSender::Agent(name.clone()),
                                     text: text.clone(),
+                                    media_path: None,
+                                    media_type: None,
                                 });
                                 while cs.messages.len() > 50 {
                                     cs.messages.remove(0);
@@ -615,6 +621,14 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                                         sender: "agent".to_string(),
                                         agent_name: Some(name),
                                         text,
+                                        media_path: None,
+                                        media_type: None,
+                                        created_at: {
+                                            std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .map(|d| d.as_millis() as i64)
+                                                .unwrap_or(0)
+                                        },
                                     },
                                 );
                             }

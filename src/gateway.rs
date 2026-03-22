@@ -994,10 +994,29 @@ fn handle_chat_event(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload: O
         }
 
         // Non-streaming: complete reply
+        let attachments = payload
+            .get("attachments")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|a| {
+                        Some(ChatAttachment {
+                            data: a.get("data")?.as_str()?.to_string(),
+                            filename: a.get("filename")?.as_str()?.to_string(),
+                            mime_type: a
+                                .get("mimeType")
+                                .or_else(|| a.get("mime_type"))?
+                                .as_str()?
+                                .to_string(),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
         cs.inbox.push(crate::chat::ChatInbound::Reply {
             text: text.to_string(),
             agent_name,
             usage: None,
+            attachments,
         });
     }
 }
@@ -1089,11 +1108,30 @@ fn handle_chat_response(chat_state: &Arc<Mutex<crate::chat::ChatState>>, payload
             .or_else(|| payload.get("agent"))
             .and_then(Value::as_str)
             .map(String::from);
+        let attachments = payload
+            .get("attachments")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|a| {
+                        Some(ChatAttachment {
+                            data: a.get("data")?.as_str()?.to_string(),
+                            filename: a.get("filename")?.as_str()?.to_string(),
+                            mime_type: a
+                                .get("mimeType")
+                                .or_else(|| a.get("mime_type"))?
+                                .as_str()?
+                                .to_string(),
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            });
         if let Ok(mut cs) = chat_state.lock() {
             cs.inbox.push(crate::chat::ChatInbound::Reply {
                 text: text.to_string(),
                 agent_name,
                 usage: None,
+                attachments,
             });
         }
     }

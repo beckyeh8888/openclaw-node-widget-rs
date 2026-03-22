@@ -15,14 +15,20 @@ fn scenario_search_finds_matching_messages() {
     state.messages.push(ChatMessage {
         sender: ChatSender::User,
         text: "How do I configure the gateway?".to_string(),
+                media_path: None,
+                media_type: None,
     });
     state.messages.push(ChatMessage {
         sender: ChatSender::Agent("Bot".to_string()),
         text: "You can configure the gateway in config.toml".to_string(),
+                media_path: None,
+                media_type: None,
     });
     state.messages.push(ChatMessage {
         sender: ChatSender::User,
         text: "Thanks!".to_string(),
+                media_path: None,
+                media_type: None,
     });
 
     // When searching for "gateway"
@@ -171,10 +177,14 @@ fn scenario_search_in_persisted_history() {
     state.messages.push(ChatMessage {
         sender: ChatSender::User,
         text: "Old message about deployment".to_string(),
+                media_path: None,
+                media_type: None,
     });
     state.messages.push(ChatMessage {
         sender: ChatSender::Agent("Bot".to_string()),
         text: "Deployment was successful".to_string(),
+                media_path: None,
+                media_type: None,
     });
 
     let query = "deployment";

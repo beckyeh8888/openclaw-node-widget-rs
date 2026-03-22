@@ -404,6 +404,7 @@ impl AgentPlugin for McpPlugin {
                                     text: text.clone(),
                                     agent_name: Some("MCP".to_string()),
                                     usage: None,
+                                    attachments: None,
                                 });
                                 cs.waiting_for_reply = false;
                             }
@@ -415,6 +416,8 @@ impl AgentPlugin for McpPlugin {
                                     ChatMessage {
                                         sender: ChatSender::Agent("MCP".to_string()),
                                         text,
+                                        media_path: None,
+                                        media_type: None,
                                     },
                                     None,
                                 ));

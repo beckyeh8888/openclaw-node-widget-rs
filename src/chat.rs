@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -10,6 +11,7 @@ use crate::dashboard::{DashboardData, LogBuffer, LogEntry, LogLevel};
 use crate::gateway::{AgentInfo, ChatAttachment, ChatSessionInfo};
 use crate::history::{ChatHistory, PersistedMessage};
 use crate::i18n;
+use crate::media::MediaStore;
 use crate::plugin::{PluginCommand, TokenUsage};
 
 const MAX_MESSAGES: usize = 50;
@@ -18,6 +20,8 @@ const MAX_MESSAGES: usize = 50;
 pub struct ChatMessage {
     pub sender: ChatSender,
     pub text: String,
+    pub media_path: Option<String>,
+    pub media_type: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -32,6 +36,7 @@ pub enum ChatInbound {
         text: String,
         agent_name: Option<String>,
         usage: Option<TokenUsage>,
+        attachments: Option<Vec<ChatAttachment>>,
     },
     StreamStart {
         msg_id: String,
@@ -96,6 +101,8 @@ pub struct ChatState {
     pub active_agent_id: String,
     /// Set to true when the app should fully quit (e.g. from tray "Quit" menu).
     pub app_quit: bool,
+    /// Media storage for file attachments.
+    pub media_store: MediaStore,
 }
 
 impl Default for ChatState {
@@ -125,6 +132,7 @@ impl ChatState {
             agents: Vec::new(),
             active_agent_id: "main".to_string(),
             app_quit: false,
+            media_store: MediaStore::new(),
         }
     }
 
@@ -149,6 +157,8 @@ impl ChatState {
                     )
                 },
                 text: pm.text.clone(),
+                media_path: pm.media_path.clone(),
+                media_type: pm.media_type.clone(),
             })
             .collect();
     }
@@ -169,6 +179,9 @@ impl ChatState {
                     _ => None,
                 },
                 text: m.text.clone(),
+                media_path: m.media_path.clone(),
+                media_type: m.media_type.clone(),
+                created_at: now_unix_ms(),
             })
             .collect();
         history.set_messages(&key, persisted);
@@ -278,6 +291,24 @@ fn active_sender<'a>(
         .or_else(|| senders.values().next())
 }
 
+fn file_url_from_path(path: std::path::PathBuf) -> String {
+    format!("file://{}", path.to_string_lossy().replace('\\', "/"))
+}
+
+fn media_name_from_relative(relative: &str) -> Option<String> {
+    std::path::Path::new(relative)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+}
+
+fn now_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 pub fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
     let state = chat_state.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -290,10 +321,30 @@ pub fn build_init_json(chat_state: &Arc<Mutex<ChatState>>) -> String {
     let messages: Vec<serde_json::Value> = state
         .messages
         .iter()
-        .map(|m| match &m.sender {
-            ChatSender::User => json!({"sender": "user", "text": m.text}),
-            ChatSender::Agent(name) => {
-                json!({"sender": "agent", "agentName": name, "text": m.text})
+        .map(|m| {
+            let media_url = m
+                .media_path
+                .as_deref()
+                .map(|p| file_url_from_path(state.media_store.get_full_path(p)));
+            let media_name = m.media_path.as_deref().and_then(media_name_from_relative);
+            match &m.sender {
+                ChatSender::User => json!({
+                    "sender": "user",
+                    "text": m.text,
+                    "mediaUrl": media_url,
+                    "mediaType": m.media_type.clone(),
+                    "mediaName": media_name,
+                }),
+                ChatSender::Agent(name) => {
+                    json!({
+                        "sender": "agent",
+                        "agentName": name,
+                        "text": m.text,
+                        "mediaUrl": media_url,
+                        "mediaType": m.media_type.clone(),
+                        "mediaName": media_name,
+                    })
+                }
             }
         })
         .collect();
@@ -448,14 +499,39 @@ pub fn handle_ipc_message(
                 let _ = tx.send(PluginCommand::SendChat {
                     message: message.clone(),
                     session_key,
-                    attachments,
+                    attachments: attachments.clone(),
                 });
             }
 
             if let Ok(mut state) = chat_state.lock() {
+                let mut media_path: Option<String> = None;
+                let mut media_type: Option<String> = None;
+                let mut final_text = message;
+
+                if let Some(first) = attachments.as_ref().and_then(|a| a.first()) {
+                    match STANDARD.decode(&first.data) {
+                        Ok(bytes) => match state.media_store.store_file(&bytes, &first.mime_type) {
+                            Ok(path) => {
+                                media_path = Some(path);
+                                media_type = Some(first.mime_type.clone());
+                            }
+                            Err(e) => {
+                                if e.kind() == std::io::ErrorKind::InvalidData {
+                                    final_text = "File too large".to_string();
+                                } else {
+                                    warn!("failed to store outbound media: {e}");
+                                }
+                            }
+                        },
+                        Err(e) => warn!("failed to decode outbound attachment: {e}"),
+                    }
+                }
+
                 state.messages.push(ChatMessage {
                     sender: ChatSender::User,
-                    text: message,
+                    text: final_text,
+                    media_path,
+                    media_type,
                 });
                 state.waiting_for_reply = true;
                 while state.messages.len() > MAX_MESSAGES {
@@ -791,11 +867,41 @@ fn process_inbox_to_webview(
 
     for event in events {
         match event {
-            ChatInbound::Reply { text, agent_name, usage } => {
+            ChatInbound::Reply {
+                text,
+                agent_name,
+                usage,
+                attachments,
+            } => {
                 let name = agent_name.unwrap_or_else(|| "Agent".to_string());
+                let mut media_path: Option<String> = None;
+                let mut media_type: Option<String> = None;
+                let mut final_text = text;
+
+                if let Some(first) = attachments.as_ref().and_then(|a| a.first()) {
+                    match STANDARD.decode(&first.data) {
+                        Ok(bytes) => match state.media_store.store_file(&bytes, &first.mime_type) {
+                            Ok(path) => {
+                                media_path = Some(path);
+                                media_type = Some(first.mime_type.clone());
+                            }
+                            Err(e) => {
+                                if e.kind() == std::io::ErrorKind::InvalidData {
+                                    final_text = "File too large".to_string();
+                                } else {
+                                    warn!("failed to store inbound media: {e}");
+                                }
+                            }
+                        },
+                        Err(e) => warn!("failed to decode inbound attachment: {e}"),
+                    }
+                }
+
                 state.messages.push(ChatMessage {
                     sender: ChatSender::Agent(name.clone()),
-                    text: text.clone(),
+                    text: final_text.clone(),
+                    media_path: media_path.clone(),
+                    media_type: media_type.clone(),
                 });
                 state.waiting_for_reply = false;
                 while state.messages.len() > MAX_MESSAGES {
@@ -809,11 +915,18 @@ fn process_inbox_to_webview(
                         "duration_ms": u.duration_ms,
                     })
                 });
+                let media_url = media_path
+                    .as_deref()
+                    .map(|p| file_url_from_path(state.media_store.get_full_path(p)));
+                let media_name = media_path.as_deref().and_then(media_name_from_relative);
                 let msg_json = json!({
                     "sender": "agent",
                     "agentName": name,
-                    "text": text,
+                    "text": final_text,
                     "usage": usage_json,
+                    "mediaUrl": media_url,
+                    "mediaType": media_type,
+                    "mediaName": media_name,
                 });
                 let _ = webview
                     .evaluate_script(&format!("addMessage({})", msg_json));
@@ -864,6 +977,8 @@ fn process_inbox_to_webview(
                         state.messages.push(ChatMessage {
                             sender: ChatSender::Agent(ps.agent_name),
                             text: ps.text,
+                            media_path: None,
+                            media_type: None,
                         });
                         while state.messages.len() > MAX_MESSAGES {
                             state.messages.remove(0);
@@ -1060,6 +1175,8 @@ mod tests {
         state.messages.push(ChatMessage {
             sender: ChatSender::User,
             text: "hello".to_string(),
+            media_path: None,
+            media_type: None,
         });
 
         assert_eq!(state.messages.len(), 1);
@@ -1074,6 +1191,8 @@ mod tests {
         state.messages.push(ChatMessage {
             sender: ChatSender::Agent("Claw".to_string()),
             text: "hi there".to_string(),
+            media_path: None,
+            media_type: None,
         });
 
         assert_eq!(state.messages.len(), 1);
@@ -1094,6 +1213,8 @@ mod tests {
             state.messages.push(ChatMessage {
                 sender: ChatSender::User,
                 text: format!("msg-{i}"),
+                media_path: None,
+                media_type: None,
             });
         }
         assert_eq!(state.messages.len(), MAX_MESSAGES);
@@ -1102,6 +1223,8 @@ mod tests {
         state.messages.push(ChatMessage {
             sender: ChatSender::User,
             text: "overflow".to_string(),
+            media_path: None,
+            media_type: None,
         });
         while state.messages.len() > MAX_MESSAGES {
             state.messages.remove(0);
@@ -1126,6 +1249,7 @@ mod tests {
             text: "answer".to_string(),
             agent_name: Some("Bot".to_string()),
             usage: None,
+            attachments: None,
         });
 
         // Simulate process_inbox_to_webview logic (without webview)
@@ -1136,6 +1260,8 @@ mod tests {
                 state.messages.push(ChatMessage {
                     sender: ChatSender::Agent(name),
                     text,
+                    media_path: None,
+                    media_type: None,
                 });
                 state.waiting_for_reply = false;
             }
@@ -1157,6 +1283,7 @@ mod tests {
             text: "hi".to_string(),
             agent_name: None,
             usage: None,
+            attachments: None,
         });
 
         let events: Vec<_> = state.inbox.drain(..).collect();
@@ -1166,6 +1293,8 @@ mod tests {
                 state.messages.push(ChatMessage {
                     sender: ChatSender::Agent(name),
                     text,
+                    media_path: None,
+                    media_type: None,
                 });
             }
         }
@@ -1407,6 +1536,8 @@ mod tests {
                 s.messages.push(ChatMessage {
                     sender: ChatSender::User,
                     text: format!("old-{i}"),
+                    media_path: None,
+                    media_type: None,
                 });
             }
         }
@@ -1431,10 +1562,14 @@ mod tests {
             s.messages.push(ChatMessage {
                 sender: ChatSender::User,
                 text: "hi".to_string(),
+                media_path: None,
+                media_type: None,
             });
             s.messages.push(ChatMessage {
                 sender: ChatSender::Agent("Bot".to_string()),
                 text: "hello".to_string(),
+                media_path: None,
+                media_type: None,
             });
             s.sessions.push(ChatSessionInfo {
                 key: "main".to_string(),
@@ -1540,6 +1675,8 @@ mod tests {
                         state.messages.push(ChatMessage {
                             sender: ChatSender::Agent(ps.agent_name),
                             text: ps.text,
+                            media_path: None,
+                            media_type: None,
                         });
                     }
                 }
@@ -1752,10 +1889,14 @@ mod tests {
             s.messages.push(ChatMessage {
                 sender: ChatSender::User,
                 text: "hello openclaw".to_string(),
+                media_path: None,
+                media_type: None,
             });
             s.messages.push(ChatMessage {
                 sender: ChatSender::Agent("OC".to_string()),
                 text: "hi there".to_string(),
+                media_path: None,
+                media_type: None,
             });
         }
 
@@ -1786,6 +1927,8 @@ mod tests {
             s.messages.push(ChatMessage {
                 sender: ChatSender::User,
                 text: "keep me".to_string(),
+                media_path: None,
+                media_type: None,
             });
         }
 
@@ -1837,6 +1980,8 @@ mod tests {
             s.messages.push(ChatMessage {
                 sender: ChatSender::User,
                 text: "old message".to_string(),
+                media_path: None,
+                media_type: None,
             });
         }
 
@@ -1916,6 +2061,8 @@ mod tests {
             s.messages.push(ChatMessage {
                 sender: ChatSender::User,
                 text: "old message".to_string(),
+                media_path: None,
+                media_type: None,
             });
             s.active_agent_id = "main".to_string();
         }
@@ -1997,10 +2144,14 @@ mod tests {
         state.messages.push(ChatMessage {
             sender: ChatSender::User,
             text: "hello".to_string(),
+            media_path: None,
+            media_type: None,
         });
         state.messages.push(ChatMessage {
             sender: ChatSender::Agent("Bot".to_string()),
             text: "hi".to_string(),
+            media_path: None,
+            media_type: None,
         });
         state.window_open = false;
         state.window_focused = false;
@@ -2074,6 +2225,7 @@ mod tests {
             text: "hello".to_string(),
             agent_name: None,
             usage: None,
+            attachments: None,
         });
 
         // Simulate the pin-change removal that process_chat_events does
@@ -2103,6 +2255,7 @@ mod tests {
             text: "Agent reply text".to_string(),
             agent_name: Some("Bot".to_string()),
             usage: None,
+            attachments: None,
         });
 
         let has_reply = state.inbox.iter().any(|e| matches!(e, ChatInbound::Reply { .. }));
@@ -2117,10 +2270,14 @@ mod tests {
         state.messages.push(ChatMessage {
             sender: ChatSender::User,
             text: "user msg".to_string(),
+            media_path: None,
+            media_type: None,
         });
         state.messages.push(ChatMessage {
             sender: ChatSender::Agent("Bot".to_string()),
             text: "bot reply".to_string(),
+            media_path: None,
+            media_type: None,
         });
 
         let mut history = ChatHistory::load();

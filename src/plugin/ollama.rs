@@ -376,6 +376,7 @@ impl AgentPlugin for OllamaPlugin {
                                                         model.clone(),
                                                     ),
                                                     usage: token_usage.clone(),
+                                                    attachments: None,
                                                 });
                                                 cs.waiting_for_reply = false;
                                             }
@@ -390,6 +391,8 @@ impl AgentPlugin for OllamaPlugin {
                                                                 model.clone(),
                                                             ),
                                                             text: full_text,
+                                                            media_path: None,
+                                                            media_type: None,
                                                         },
                                                         token_usage,
                                                     ),

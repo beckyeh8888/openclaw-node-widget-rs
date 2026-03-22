@@ -466,6 +466,7 @@ fn emit_reply(
             text: text.to_string(),
             agent_name: Some(plugin_name.to_string()),
             usage: None,
+            attachments: None,
         });
         cs.waiting_for_reply = false;
     }
@@ -475,6 +476,8 @@ fn emit_reply(
             ChatMessage {
                 sender: ChatSender::Agent(plugin_name.to_string()),
                 text: text.to_string(),
+                media_path: None,
+                media_type: None,
             },
             None,
         ));

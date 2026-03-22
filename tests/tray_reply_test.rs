@@ -95,11 +95,13 @@ fn scenario_multiple_replies_queue_correctly() {
             text: "First reply".to_string(),
             agent_name: Some("Bot".to_string()),
             usage: None,
+            attachments: None,
         });
         s.inbox.push(ChatInbound::Reply {
             text: "Second reply".to_string(),
             agent_name: Some("Bot".to_string()),
             usage: None,
+            attachments: None,
         });
     }
 

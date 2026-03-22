@@ -1676,11 +1676,26 @@ function addMessage(m) {
   var b = document.createElement("div");
   b.className = "bubble";
 
-  if (m.imageUrl) {
+  var mediaUrl = m.mediaUrl || m.imageUrl || null;
+  var mediaType = m.mediaType || "";
+  var isImageMedia = mediaUrl && (
+    mediaType.indexOf("image/") === 0 ||
+    /\\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(mediaUrl)
+  );
+
+  if (isImageMedia) {
     var img = document.createElement("img");
-    img.src = m.imageUrl;
+    img.src = mediaUrl;
+    img.loading = "lazy";
     img.onclick = function() { openOverlay(this.src); };
     b.appendChild(img);
+  } else if (mediaUrl) {
+    var fileLink = document.createElement("a");
+    fileLink.href = mediaUrl;
+    fileLink.textContent = m.mediaName || "Attachment";
+    fileLink.target = "_blank";
+    fileLink.rel = "noopener";
+    b.appendChild(fileLink);
   }
   if (m.text) {
     if (m.sender === "agent") {

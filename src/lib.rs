@@ -8,5 +8,6 @@ pub mod gateway;
 pub mod history;
 pub mod i18n;
 pub mod markdown;
+pub mod media;
 pub mod plugin;
 pub mod voice;
