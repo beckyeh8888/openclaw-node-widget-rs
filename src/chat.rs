@@ -1064,6 +1064,36 @@ fn process_inbox_to_webview(
                     "if(typeof onPluginSwitched==='function')onPluginSwitched({})",
                     data
                 ));
+                // Re-render messages loaded from SQLite history
+                for msg in &state.messages {
+                    let sender = match &msg.sender {
+                        ChatSender::User => "user",
+                        ChatSender::Agent(_) => "agent",
+                    };
+                    let agent_name = match &msg.sender {
+                        ChatSender::Agent(n) => Some(n.clone()),
+                        _ => None,
+                    };
+                    let mut m = json!({
+                        "sender": sender,
+                        "text": msg.text,
+                    });
+                    if let Some(name) = agent_name {
+                        m["agentName"] = json!(name);
+                    }
+                    if let Some(ref path) = msg.media_path {
+                        let full_path = state.media_store.get_full_path(path);
+                        let path_str = full_path.to_string_lossy().replace('\\', "/");
+                        m["mediaUrl"] = json!(format!("file:///{}", path_str));
+                        if let Some(ref mt) = msg.media_type {
+                            m["mediaType"] = json!(mt);
+                        }
+                    }
+                    let _ = webview.evaluate_script(&format!(
+                        "if(typeof addMessage==='function')addMessage({})",
+                        m
+                    ));
+                }
             }
             ChatInbound::AgentsList { agents } => {
                 state.agents = agents.clone();
