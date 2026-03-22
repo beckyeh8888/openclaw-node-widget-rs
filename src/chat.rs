@@ -615,38 +615,58 @@ pub fn handle_ipc_message(
             if !agent_id.is_empty() {
                 if let Ok(mut state) = chat_state.lock() {
                     let changed = state.active_agent_id != agent_id;
-                    state.active_agent_id = agent_id.clone();
-                    if agent_type == "openclaw" {
-                        // For OpenClaw agents, set session key and route via gateway
-                        state.active_session_key = session_key;
-                        // Keep active_plugin_id pointing to an openclaw plugin (or default)
-                        let oc_id = cmd_senders
-                            .keys()
-                            .find(|k| k.starts_with("openclaw-"))
-                            .cloned()
-                            .unwrap_or_else(|| "default".to_string());
-                        state.active_plugin_id = Some(oc_id);
-                    } else {
-                        // For n8n/ollama/openai-compatible, route via plugin sender
-                        state.active_plugin_id = Some(agent_id.clone());
-                        state.active_session_key = "main".to_string();
-                    }
                     if changed {
-                        let sk = state.active_session_key.clone();
-                        // Save current + load new from SQLite history
+                        // 1. Save CURRENT conversation with OLD keys
                         if let Some(mut history) = state.history.take() {
                             state.save_to_history(&mut history);
+                            state.history = Some(history);
+                        }
+
+                        // 2. Switch keys to NEW agent
+                        state.active_agent_id = agent_id.clone();
+                        if agent_type == "openclaw" {
+                            state.active_session_key = session_key;
+                            let oc_id = cmd_senders
+                                .keys()
+                                .find(|k| k.starts_with("openclaw-"))
+                                .cloned()
+                                .unwrap_or_else(|| "default".to_string());
+                            state.active_plugin_id = Some(oc_id);
+                        } else {
+                            state.active_plugin_id = Some(agent_id.clone());
+                            state.active_session_key = "main".to_string();
+                        }
+
+                        // 3. Load NEW conversation with NEW keys
+                        if let Some(mut history) = state.history.take() {
                             state.load_from_history(&history);
                             state.history = Some(history);
                         } else {
                             state.messages.clear();
                         }
+
+                        let sk = state.active_session_key.clone();
                         state.pending_stream = None;
                         state.waiting_for_reply = false;
                         state.inbox.push(ChatInbound::PluginSwitched {
                             plugin_id: agent_id,
                             session_key: sk,
                         });
+                    } else {
+                        // Same agent, just update keys
+                        state.active_agent_id = agent_id.clone();
+                        if agent_type == "openclaw" {
+                            state.active_session_key = session_key;
+                            let oc_id = cmd_senders
+                                .keys()
+                                .find(|k| k.starts_with("openclaw-"))
+                                .cloned()
+                                .unwrap_or_else(|| "default".to_string());
+                            state.active_plugin_id = Some(oc_id);
+                        } else {
+                            state.active_plugin_id = Some(agent_id.clone());
+                            state.active_session_key = "main".to_string();
+                        }
                     }
                 }
             }

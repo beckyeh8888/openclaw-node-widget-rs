@@ -245,6 +245,8 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     let chat_state = Arc::new(Mutex::new(chat::ChatState::new()));
     if let Ok(mut cs) = chat_state.lock() {
         cs.media_store = media::MediaStore::new();
+        // Load initial conversation from history
+        cs.load_from_history(&chat_history);
         cs.history = Some(ChatHistory::load());
     }
     let mut notification_limiter = NotificationLimiter::new(30);
@@ -616,22 +618,24 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
                                 }
                                 cs.waiting_for_reply = false;
 
-                                chat_history.push_message(
-                                    &cs.conversation_key(),
-                                    history::PersistedMessage {
-                                        sender: "agent".to_string(),
-                                        agent_name: Some(name),
-                                        text,
-                                        media_path: None,
-                                        media_type: None,
-                                        created_at: {
-                                            std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .map(|d| d.as_millis() as i64)
-                                                .unwrap_or(0)
-                                        },
+                                let conv_key = cs.conversation_key();
+                                let pmsg = history::PersistedMessage {
+                                    sender: "agent".to_string(),
+                                    agent_name: Some(name),
+                                    text,
+                                    media_path: None,
+                                    media_type: None,
+                                    created_at: {
+                                        std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .map(|d| d.as_millis() as i64)
+                                            .unwrap_or(0)
                                     },
-                                );
+                                };
+                                chat_history.push_message(&conv_key, pmsg.clone());
+                                if let Some(ref mut h) = cs.history {
+                                    h.push_message(&conv_key, pmsg);
+                                }
                             }
                         }
                     }
