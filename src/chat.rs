@@ -76,7 +76,6 @@ pub struct PendingStream {
     pub text: String,
 }
 
-#[derive(Debug)]
 pub struct ChatState {
     pub messages: Vec<ChatMessage>,
     pub inbox: Vec<ChatInbound>,
@@ -103,6 +102,20 @@ pub struct ChatState {
     pub app_quit: bool,
     /// Media storage for file attachments.
     pub media_store: MediaStore,
+    /// Chat history persistence (SQLite).
+    pub history: Option<ChatHistory>,
+}
+
+impl std::fmt::Debug for ChatState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChatState")
+            .field("messages", &self.messages.len())
+            .field("connected", &self.connected)
+            .field("active_agent_id", &self.active_agent_id)
+            .field("active_session_key", &self.active_session_key)
+            .field("history", &self.history.is_some())
+            .finish()
+    }
 }
 
 impl Default for ChatState {
@@ -133,6 +146,7 @@ impl ChatState {
             active_agent_id: "main".to_string(),
             app_quit: false,
             media_store: MediaStore::new(),
+            history: None,
         }
     }
 
@@ -619,7 +633,14 @@ pub fn handle_ipc_message(
                     }
                     if changed {
                         let sk = state.active_session_key.clone();
-                        state.messages.clear();
+                        // Save current + load new from SQLite history
+                        if let Some(mut history) = state.history.take() {
+                            state.save_to_history(&mut history);
+                            state.load_from_history(&history);
+                            state.history = Some(history);
+                        } else {
+                            state.messages.clear();
+                        }
                         state.pending_stream = None;
                         state.waiting_for_reply = false;
                         state.inbox.push(ChatInbound::PluginSwitched {

@@ -241,11 +241,12 @@ async fn run_with_tray(mut config: Config) -> error::Result<()> {
     let (gateway_event_tx, mut gateway_event_rx) = mpsc::unbounded_channel();
     let (gateway_monitor_tx, gateway_monitor_rx) = mpsc::unbounded_channel();
 
+    let mut chat_history = ChatHistory::load();
     let chat_state = Arc::new(Mutex::new(chat::ChatState::new()));
     if let Ok(mut cs) = chat_state.lock() {
         cs.media_store = media::MediaStore::new();
+        cs.history = Some(ChatHistory::load());
     }
-    let mut chat_history = ChatHistory::load();
     let mut notification_limiter = NotificationLimiter::new(30);
     let mut last_history_save = std::time::Instant::now();
     let start_time = std::time::Instant::now();
