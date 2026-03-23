@@ -2182,21 +2182,24 @@ document.getElementById("pluginModal").addEventListener("click", function(e) {
   if (e.target === this) closePluginModal();
 });
 
-document.getElementById("settingsSaveAllBtn").addEventListener("click", function() {
+function saveGeneralSettings() {
   var theme = document.getElementById("settingsTheme").value;
-  var general = {
-    language: document.getElementById("settingsLang").value,
-    autoStart: document.getElementById("settingsAutoStart").checked,
-    theme: theme
-  };
   applyTheme(theme);
   window.ipc.postMessage(JSON.stringify({
     type: "saveGeneral",
-    language: general.language,
-    autoStart: general.autoStart,
-    theme: general.theme
+    language: document.getElementById("settingsLang").value,
+    autoStart: document.getElementById("settingsAutoStart").checked,
+    theme: theme
   }));
-});
+}
+
+// Auto-save on every change — no need to click Save
+document.getElementById("settingsLang").addEventListener("change", saveGeneralSettings);
+document.getElementById("settingsTheme").addEventListener("change", saveGeneralSettings);
+document.getElementById("settingsAutoStart").addEventListener("change", saveGeneralSettings);
+
+// Save All button still works as fallback
+document.getElementById("settingsSaveAllBtn").addEventListener("click", saveGeneralSettings);
 
 document.getElementById("settingsResetBtn").addEventListener("click", function() {
   window.ipc.postMessage(JSON.stringify({ type: "getSettings" }));
