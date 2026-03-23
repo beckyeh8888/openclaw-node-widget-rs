@@ -2057,9 +2057,9 @@ function updateSettings(data) {
   if (data.plugins) settingsPlugins = data.plugins;
   if (data.general) settingsGeneral = data.general;
   renderPluginList();
-  document.getElementById("settingsLang").value = settingsGeneral.language || "auto";
+  document.getElementById("settingsLang").value = (settingsGeneral.language || "auto").toLowerCase();
   document.getElementById("settingsAutoStart").checked = settingsGeneral.autoStart || false;
-  document.getElementById("settingsTheme").value = settingsGeneral.theme || "auto";
+  document.getElementById("settingsTheme").value = (settingsGeneral.theme || "auto").toLowerCase();
 }
 
 function renderPluginList() {
